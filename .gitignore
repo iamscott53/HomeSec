@@ -70,15 +70,19 @@ cameras/app/**/recordings/
 cameras/app/**/snapshots/
 cameras/app/**/*.mp4
 cameras/app/**/*.mkv
-cameras/app/**/*.ts
+# Note: we deliberately do NOT exclude `*.ts` by bare extension here.
+# MPEG-TS video segments live inside `recordings/`, `data/`, or
+# `snapshots/` directories (already excluded above), and a bare
+# `*.ts` pattern would silently swallow TypeScript source files if
+# the cameras backend or frontend is ever written in TS.
 cameras/app/**/*.jpg
 cameras/app/**/*.jpeg
 cameras/app/**/*.png
 !cameras/app/**/README*.png
 # The go2rtc config file is tracked with placeholders only. If you create
 # a local copy with real RTSP URLs, put it alongside as go2rtc.local.yaml
-# and keep it out of git.
-cameras/app/go2rtc/go2rtc.local.yaml
+# and keep it out of git. (Path updated after the Docker→LXC refactor.)
+cameras/app/lxc/go2rtc/go2rtc.local.yaml
 cameras/app/**/ntfy-data/
 cameras/app/**/ntfy/data/
 
