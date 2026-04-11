@@ -1,0 +1,102 @@
+# Frigate docker-compose for the homesec-cameras-frigate VM.
+#
+# This file is installed to /var/lib/frigate/docker-compose.yml by install.sh
+# and run from there. It is NOT run on the Proxmox host itself — Docker only
+# exists inside the VM.
+#
+# Hardware requirements (must be met by the VM, not the host):
+#   - NVIDIA GPU visible to the VM (PCIe passthrough) with the proprietary
+#     driver installed and nvidia-container-toolkit configured for Docker.
+#   - Coral USB Accelerator visible to the VM (USB passthrough) with
+#     libedgetpu1-std installed.
+#
+# See ../../../docs/nvidia-gpu-passthrough.md for how to get there.
+
+services:
+  frigate:
+    # TODO: pin a specific version before first install.
+    # DO NOT use :latest or :stable — Frigate schema migrations can be
+    # breaking between major versions. Look up the current stable release:
+    #   https://github.com/blakeblackshear/frigate/releases
+    # Example: image: ghcr.io/blakeblackshear/frigate:0.15.0
+    image: ghcr.io/blakeblackshear/frigate:PIN_ME_BEFORE_INSTALL
+    container_name: frigate
+    hostname: frigate
+    restart: unless-stopped
+
+    # Tmpfs cache for Frigate's internal state. Sized generously for a
+    # 7-camera setup.
+    shm_size: "1g"
+    tmpfs:
+      - /tmp/cache:size=2g,uid=0,gid=0,mode=700
+
+    # NVIDIA GPU access via the container-toolkit runtime.
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,video,utility
+      - FRIGATE_RTSP_PASSWORD_FILE=/run/secrets/rtsp_password
+      - PLUS_API_KEY=
+      - TZ=America/New_York
+
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+    # Coral USB Accelerator access. We mount the whole USB bus tree and
+    # allow the USB device class (189) via cgroup rules. This is the
+    # standard pattern for USB-attached hardware in Docker on Linux.
+    devices:
+      - /dev/bus/usb:/dev/bus/usb
+
+    # Volumes:
+    #   - config.yml (tracked in git with placeholders)
+    #   - media (clips, snapshots, recordings) — NOT tracked; grows
+    #   - db (face + plate embeddings, event metadata) — backed up
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /var/lib/frigate/config:/config
+      - /var/lib/frigate/media:/media/frigate
+      - /var/lib/frigate/db:/db
+
+    # Secrets: read the RTSP password from a file, not an env var.
+    # The file is populated by install.sh from operator input and is
+    # never committed to the repo.
+    secrets:
+      - rtsp_password
+
+    # The Frigate web UI and API. Exposed on the VM's VLAN 1 IP. Do NOT
+    # publish these to the Proxmox host's external network — the VM
+    # itself is the network perimeter.
+    ports:
+      - "5000:5000"   # web UI
+      - "1935:1935"   # RTMP (legacy; Frigate may deprecate)
+      - "8554:8554"   # RTSP re-stream
+      - "8555:8555/tcp"   # WebRTC
+      - "8555:8555/udp"   # WebRTC
+
+    # Standard hardening for a network-facing service.
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN          # for log rotation
+      - DAC_OVERRIDE   # for config access
+      - SETUID
+      - SETGID
+    security_opt:
+      - no-new-privileges:true
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:5000/api/version"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+secrets:
+  rtsp_password:
+    file: /var/lib/frigate/secrets/rtsp_password

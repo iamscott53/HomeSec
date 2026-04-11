@@ -1,0 +1,302 @@
+# Frigate configuration template for the homesec-cameras-frigate VM.
+#
+# This file is installed to /var/lib/frigate/config/config.yml by install.sh.
+# It is tracked in git with placeholders only — NEVER commit real MQTT
+# passwords, RTSP passwords, or camera stream tokens.
+#
+# Placeholder replacements to make after copying into the VM:
+#   - MQTT_IP             → LAN IP of homesec-cameras-mqtt (LXC 202)
+#   - MQTT_USER           → Frigate's MQTT username (created in the mqtt LXC)
+#   - MQTT_PASSWORD_ENV   → the env var name holding the MQTT password
+#   - GO2RTC_IP           → LAN IP of homesec-cameras-go2rtc (LXC 200)
+#   - FRONT_DOOR_TOKEN    → RTSP token from go2rtc or directly from UniFi Protect
+#   - (repeat per camera)
+#
+# See ../../docs/detection-stack-overview.md for the overall architecture
+# and ../../docs/face-recognition-design.md / alpr-design.md for the
+# feature-specific rationale behind the settings below.
+
+mqtt:
+  enabled: true
+  host: MQTT_IP
+  port: 1883
+  topic_prefix: frigate
+  client_id: frigate-homesec
+  user: MQTT_USER
+  # Password comes from an environment variable inside the container,
+  # which is set from Docker secrets at runtime. See docker-compose.yml.
+  password: "{FRIGATE_MQTT_PASSWORD}"
+  stats_interval: 60
+
+# ---------------------------------------------------------------------
+# Detectors — the two-accelerator split.
+#
+# Coral EdgeTPU handles 24/7 object detection (the hot loop).
+# NVIDIA GPU is reserved for face recognition and ALPR OCR, which are
+# event-triggered and fire only when an object detection creates an event.
+# ---------------------------------------------------------------------
+detectors:
+  coral:
+    type: edgetpu
+    device: usb
+  # Frigate's face rec and ALPR use the "nvidia" / TensorRT backends
+  # internally; they don't need an explicit "detector" entry here.
+
+# ---------------------------------------------------------------------
+# ffmpeg / go2rtc integration.
+#
+# Frigate pulls its streams via go2rtc (we run go2rtc as a separate LXC
+# so only ONE component has VLAN 10 access). go2rtc serves the exact
+# same RTSP streams that come from the UNVR, just proxied to VLAN 1.
+#
+# Segment length for continuous 24/7 recording is set here. Default is
+# 1800 seconds = 30 minutes per file — large enough to be a manageable
+# chunk, small enough to copy/archive/play individually. To change it,
+# edit the -segment_time value below. See
+# ../../docs/recording-retention-design.md for the full explanation.
+#
+# Valid alternative values:
+#     -segment_time 600   →  10 min per file
+#     -segment_time 1200  →  20 min per file
+#     -segment_time 1800  →  30 min per file  (default — recommended)
+#     -segment_time 3600  →  60 min per file
+# ---------------------------------------------------------------------
+ffmpeg:
+  hwaccel_args: preset-nvidia
+  output_args:
+    record: >-
+      preset-record-generic-audio-copy
+      -f segment -segment_time 1800 -segment_format mp4
+      -reset_timestamps 1 -strftime 1 -c copy
+
+go2rtc:
+  # We use the external go2rtc LXC instead of Frigate's embedded go2rtc.
+  # Keep this section present but empty so Frigate doesn't start its own.
+  streams: {}
+
+# ---------------------------------------------------------------------
+# Object detection defaults applied to every camera unless overridden.
+# ---------------------------------------------------------------------
+detect:
+  enabled: true
+  fps: 5
+  min_initialized: 2
+
+objects:
+  track:
+    - person
+    - car
+    - truck
+    - motorcycle
+    - bicycle
+    - dog
+    - cat
+    - package
+  filters:
+    person:
+      min_score: 0.55
+      threshold: 0.70
+    car:
+      min_score: 0.55
+      threshold: 0.70
+    package:
+      min_score: 0.50
+      threshold: 0.70
+
+# ---------------------------------------------------------------------
+# Face recognition (Frigate 0.14+).
+#
+# Built-in face rec runs on the NVIDIA GPU. It emits per-event face
+# detection + matching against the enrolled gallery. Cross-clip clustering
+# of unknown faces happens downstream in the analyzer LXC — see
+# ../../docs/face-recognition-design.md.
+# ---------------------------------------------------------------------
+face_recognition:
+  enabled: true
+  model_size: large
+
+# ---------------------------------------------------------------------
+# License plate recognition (Frigate 0.16+).
+#
+# Runs on the NVIDIA GPU alongside face rec. Emits per-event plate text
+# + confidence. Cross-clip plate history is computed downstream in the
+# analyzer — see ../../docs/alpr-design.md.
+# ---------------------------------------------------------------------
+lpr:
+  enabled: true
+  # Tune these during first-run calibration.
+  detection_threshold: 0.70
+  recognition_threshold: 0.80
+
+# ---------------------------------------------------------------------
+# Recording + retention — TWO-TIER MODEL.
+#
+# See ../../docs/recording-retention-design.md for the full design and
+# ../../docs/storage-management-design.md for the disk-pressure
+# thresholds, quality downgrade ladder, download-and-delete UX, and
+# "recording will stop" escalation.
+#
+# Short version:
+#
+# Tier 1: Continuous 24/7 recording to /media/frigate/recordings/,
+#   segmented into ~30-minute files (see ffmpeg.output_args.record
+#   above). Frigate writes it with day-as-top-level directory
+#   (YYYY-MM-DD/). Frigate's built-in retention here is set to a LONG
+#   number (365) because the REAL retention is handled by the analyzer
+#   LXC's day-level cleanup script: days with any triggered event get
+#   a `.protected` sentinel and are NEVER deleted automatically; days
+#   with no triggers get `.cleanup-eligible` and are deleted when disk
+#   pressure hits >= 75%. If all `.cleanup-eligible` days are exhausted
+#   and disk keeps climbing, the analyzer emits a "recording will stop"
+#   red notification every hour instead of touching protected days.
+#
+# Tier 2: Triggered-event clips to /media/frigate/clips/. Each event
+#   gets one clip with 60s pre-roll and post-roll until the tracked
+#   object is gone plus 30s. Retention: 365 days (effectively forever;
+#   the analyzer's disk watchdog NEVER touches this directory).
+#
+# The UNVR Instant still runs its own independent UniFi Protect 24/7
+# recording in parallel. This Frigate archive is ADDITIONAL — a second,
+# smarter archive on Proxmox storage.
+#
+# QUALITY PRESETS (four tiers: High / Medium / Low / Lowest)
+# ---------------------------------------------------------------------
+# The analyzer maintains four complete config files at
+#   /var/lib/frigate/config/config.<preset>.yml
+# and symlinks /var/lib/frigate/config/config.yml at the active one.
+# `ffmpeg.output_args.record` below is the HIGH preset (stream-copy,
+# the default). The other three presets re-encode via h264_nvenc on
+# the NVIDIA GPU at progressively lower bitrates + framerates. See
+# ../../docs/storage-management-design.md for the exact ffmpeg lines
+# per preset and the storage budget table. Auto-downgrade at 95% disk
+# usage moves the symlink one step down and restarts Frigate. Manual
+# override lives in the frontend's Settings page. There is NO
+# automatic upgrade — only the operator can go back up.
+# ---------------------------------------------------------------------
+record:
+  enabled: true
+
+  # Tier 1 — continuous. We set a generous Frigate-native retention
+  # (365 days) because the analyzer's day-level cleanup script is the
+  # REAL retention authority. Frigate would never hit this limit in
+  # practice; the watchdog kicks in at 80% disk usage long before.
+  retain:
+    days: 365
+    mode: all
+
+  # Tier 2 — triggered events. Pre-roll + post-roll, kept for a full year.
+  events:
+    pre_capture: 60            # 60 seconds of context before the trigger
+    post_capture: 30           # 30s tail after the tracked object leaves
+    retain:
+      default: 365             # 1 year of triggered clips (effectively forever)
+      mode: active_objects
+
+snapshots:
+  enabled: true
+  clean_copy: true
+  timestamp: false
+  bounding_box: true
+  retain:
+    default: 365
+
+# ---------------------------------------------------------------------
+# Cameras (7 total).
+#
+# All streams come from the go2rtc LXC (which proxies them from the
+# UNVR on VLAN 10). Fill in GO2RTC_IP and each stream's token before
+# starting Frigate. Stream names must match whatever you configured in
+# cameras/app/lxc/go2rtc/go2rtc.yaml.
+# ---------------------------------------------------------------------
+cameras:
+  doorbell:
+    ffmpeg:
+      inputs:
+        - path: rtsp://GO2RTC_IP:8554/doorbell
+          roles: [detect, record]
+    detect:
+      width: 2688
+      height: 1520
+      fps: 5
+
+  front_left:
+    ffmpeg:
+      inputs:
+        - path: rtsp://GO2RTC_IP:8554/front-left
+          roles: [detect, record]
+    detect:
+      width: 2688
+      height: 1520
+      fps: 5
+
+  front_right:
+    ffmpeg:
+      inputs:
+        - path: rtsp://GO2RTC_IP:8554/front-right
+          roles: [detect, record]
+    detect:
+      width: 2688
+      height: 1520
+      fps: 5
+
+  front_center:
+    ffmpeg:
+      inputs:
+        - path: rtsp://GO2RTC_IP:8554/front-center
+          roles: [detect, record]
+    detect:
+      width: 2688
+      height: 1520
+      fps: 5
+
+  rear_left:
+    ffmpeg:
+      inputs:
+        - path: rtsp://GO2RTC_IP:8554/rear-left
+          roles: [detect, record]
+    detect:
+      width: 2688
+      height: 1520
+      fps: 5
+
+  rear_right:
+    ffmpeg:
+      inputs:
+        - path: rtsp://GO2RTC_IP:8554/rear-right
+          roles: [detect, record]
+    detect:
+      width: 2688
+      height: 1520
+      fps: 5
+
+  rear_center:
+    ffmpeg:
+      inputs:
+        - path: rtsp://GO2RTC_IP:8554/rear-center
+          roles: [detect, record]
+    detect:
+      width: 2688
+      height: 1520
+      fps: 5
+
+# ---------------------------------------------------------------------
+# UI / logger / telemetry
+# ---------------------------------------------------------------------
+ui:
+  time_format: 24hour
+  live_mode: mse
+
+logger:
+  default: info
+  logs:
+    frigate.event: debug
+
+telemetry:
+  network_interfaces:
+    - eth0
+  stats:
+    amd_gpu_stats: false
+    intel_gpu_stats: false
+    network_bandwidth: false
+
+version: 0.15-0

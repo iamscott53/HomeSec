@@ -11,7 +11,27 @@ Tag conventions:
 
 ## [Unreleased]
 
-(nothing yet)
+### Added
+
+- **Cameras detection stack.** Major expansion of the cameras section from a 4-LXC stub to a 5-LXC + 1-VM Frigate-based pipeline with facial recognition, license plate recognition, vehicle attribute extraction, cross-clip person clustering, and opt-in social enrichment. All local, no cloud, no subscriptions in the default configuration. See [`cameras/CHANGELOG.md`](./cameras/CHANGELOG.md) for the full section-scoped change list.
+- **Cameras two-tier recording design.** Continuous 24/7 recording in day-level folders with 30-minute segments, plus a separate "Triggered Events" archive of motion-triggered clips with 60 seconds of pre-roll. Day-level protection: days with any triggers get `.protected`, days without get `.cleanup-eligible`. Hourly disk watchdog deletes eligible days first when disk pressure hits. One-shot "review this day" notification fires the first time a new date accumulates a trigger. Documented in `cameras/docs/recording-retention-design.md`; implementation landing with the analyzer code in a follow-up PR.
+- **Cameras storage management design.** Full disk-pressure management for the cameras recording archive: threshold chain at 75% (warning + delete eligible days), 90% (critical), 95% (automatic quality downgrade). Four recording quality presets (High / Medium / Low / Lowest) with GPU-accelerated h264_nvenc re-encode per preset and a storage budget ladder (75 → 45 → 30 → 15 GB/day for 7 cameras). **Protected days are now inviolable under automation** — the earlier "delete oldest protected day at >95%" fallback has been removed. When eligible days are exhausted and disk pressure keeps climbing, the system fires a red urgent "recording will stop" notification every hour until the operator adds storage or downloads + deletes old days. **User-friendly download UX** via a new Storage page in the frontend: checkbox list of oldest days, one-click "Download selected as ZIP" over HTTPS (streaming `ZIP_STORED` via the analyzer's `StreamingResponse`), post-download "Delete from server?" modal, 10-minute download-hash confirmation window for deleting protected days. Optional SFTP fallback (chroot'd read-only, off by default). Manual quality preset override in Settings. Documented in `cameras/docs/storage-management-design.md`.
+- **`docs/proxmox-vm-best-practices.md`** — cross-cutting standards for Proxmox VMs in HomeSec. LXC remains the default runtime; VMs are used only for narrow cases (Docker-only upstream images, heavy PCIe passthrough, non-Linux guests). Documents VMID numbering per section, PCIe + USB passthrough patterns, and the when-to-use-a-VM rubric.
+
+### Changed
+
+- **`docs/proxmox-lxc-best-practices.md`** — added a pointer at the top to the new VM best-practices doc. LXC is still the default; the pointer just makes the exception cases discoverable.
+- **`docs/README.md`** — links the new VM best-practices doc.
+
+### Policy decisions locked in
+
+- **Python 3.12 for the cameras analyzer service.** First concrete language commitment in the repo. Driven by the Python-only open-source ecosystem for face recognition (InsightFace), Frigate's own developer community, and mature async MQTT / FastAPI / SQLModel support.
+- **Frigate runs in a Proxmox VM (VM 210)**, not an LXC, to keep the "no Docker-in-LXC" rule intact.
+- **Dual-accelerator camera AI:** Coral Edge TPU (24/7 object detection) + NVIDIA GPU (event-triggered face rec + ALPR OCR), both passed through to the same Frigate VM.
+- **Auto-cluster every face forever.** Operator policy, legal posture documented in `cameras/docs/face-recognition-design.md`.
+- **Two-tier cameras recording.** Continuous 24/7 (day-level protection, cleanup when space is low) + separate "Triggered Events" archive (60s pre-roll, kept 365 days). 30-minute segment length by default. Documented in `cameras/docs/recording-retention-design.md`.
+- **Social enrichment defaults to the most restrictive mode.** Mode A (linked profiles) on; Mode B (manual reverse-search helper) off; Mode C (paid third-party API stub) off and unconfigured. No automated scraping of social media platforms, ever.
+- **Version bump is mandatory on every merge to `main`.** Every `dev` → `main` merge MUST bump at least one semver component (repo-level `vX.Y.Z` tag plus any per-section tags for sections that changed). Patch bump for fixes-only merges, minor bump when any section gains new features, major bump for breaking changes. The operator is responsible for running the bump before clicking Merge. Documented in the Versioning section of the root README.
 
 ## [0.1.0] — 2026-04-11
 

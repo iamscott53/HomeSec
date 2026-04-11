@@ -2,6 +2,8 @@
 
 Cross-cutting rules for every LXC container in this repo. Applies to `cameras/`, `network-security/`, `switch/`, `nvr/`, `iot/`, `wifi/` — every section that grows an app runs that app in one or more Proxmox LXC containers, not in Docker.
 
+> **LXC is the default.** For the narrow cases where we reach for a **Proxmox VM** instead (Docker-only images, heavy PCIe passthrough, non-Linux guests), see [`proxmox-vm-best-practices.md`](./proxmox-vm-best-practices.md). The Frigate VM in the cameras section is the only such case in v0.1.
+
 > **Why not Docker-in-LXC?**
 > It works, but it requires `nesting=1`, which widens the LXC attack surface, breaks some of Proxmox's AppArmor profiles, and complicates backup/restore. For services that ship as a single binary or a plain .deb (go2rtc, ntfy, pfSense exporters, most Python/Node apps), running them natively in LXC is simpler, faster to start, and easier to reason about. HomeSec is a home lab, not a Kubernetes cluster — keep it boring.
 

@@ -4,84 +4,146 @@ Local, privacy-oriented camera app for the seven-camera Ubiquiti Protect deploym
 
 ## What this app does
 
-1. **AI alerts** — subscribes to the UniFi Protect event stream on the UNVR Instant, filters for AI detections (person, vehicle, package, animal), and POSTs each event to a self-hosted notification service so you get a push on your phone.
-2. **Live streaming** — serves a grid of low-latency tiles (one per camera) in a browser on the LAN.
+1. **Object detection across all 7 cameras** 24/7 on a Google Coral Edge TPU — person, vehicle, package, dog/cat, etc.
+2. **Facial recognition** against every face the cameras see, with cross-clip clustering into stable person identities. Enrolled people (family, frequent visitors) get names; unknown people get stable `Unknown #N` labels and are grouped across all their appearances. Retained forever per operator policy.
+3. **License plate recognition** with cross-clip plate history — every plate, every sighting, tracked over time. Plates get normalized (confusable chars, state format) and fuzzy-merged for OCR noise.
+4. **Vehicle attributes** — make, model, color, body type — inferred from vehicle crops and correlated with plate sightings.
+5. **Live streaming** of the 7-camera grid in a browser on the LAN.
+6. **Two-tier smart recording** — continuous 24/7 footage in day-level folders with 30-minute segments, plus a separate "Triggered Events" archive of motion-triggered clips with 60 seconds of pre-roll and post-roll. Days with triggers are **never** automatically deleted. Days with no triggers are eligible for cleanup when disk pressure hits. See [`docs/recording-retention-design.md`](./docs/recording-retention-design.md).
+7. **User-friendly storage management** — a Storage page in the web UI with a checkbox list of the oldest days, one-click "Download selected as ZIP" over HTTPS, and a post-download "Delete from server?" prompt (the only automated path to removing a protected day). Four recording quality presets (High / Medium / Low / Lowest) with automatic downgrade when disk hits 95% and a manual override in Settings. Never runs out of disk silently — when all cleanup-eligible days are exhausted and pressure keeps climbing, the operator gets a red hourly "recording will stop" notification until they add storage or download and delete protected days. See [`docs/storage-management-design.md`](./docs/storage-management-design.md).
+8. **Push notifications** to a phone via self-hosted ntfy: per-event alerts for interesting detections, a one-shot "review this day" notification the first time a new day accumulates a trigger, and storage-pressure notifications at 75% (warning), 90% (critical), and 95% (quality downgrade).
+9. **Social enrichment** — linked profiles on enrolled people, optional manual reverse-image-search helper, optional opt-in third-party face-search stub. Defaults are the most restrictive mode; see [`docs/social-enrichment-design.md`](./docs/social-enrichment-design.md).
 
 Everything runs on your network. No cloud. No subscriptions. No phoning home.
 
-## Runtime: Proxmox LXC (not Docker)
+## Design docs
 
-HomeSec runs on **Proxmox**, and every service in this app runs in its own **unprivileged LXC container** — one LXC per service. No Docker, no docker-compose, no nesting. Services run natively via systemd.
+Start with the overview, then the specific subsystem you care about:
 
-See the cross-cutting standards doc before provisioning any container:
+- **[`docs/detection-stack-overview.md`](./docs/detection-stack-overview.md)** — architecture, event flow, component responsibilities. Read this first.
+- **[`docs/face-recognition-design.md`](./docs/face-recognition-design.md)** — auto-clustering, data model, enrollment, retention policy.
+- **[`docs/alpr-design.md`](./docs/alpr-design.md)** — plate pipeline, normalization, cross-clip history.
+- **[`docs/vehicle-attributes-design.md`](./docs/vehicle-attributes-design.md)** — make/model/color options and trade-offs.
+- **[`docs/recording-retention-design.md`](./docs/recording-retention-design.md)** — two-tier recording, pre-roll + post-roll, segment length, day-level protection, disk watchdog, "review this day" notification.
+- **[`docs/storage-management-design.md`](./docs/storage-management-design.md)** — disk pressure thresholds (75/90/95%), quality preset ladder, download-and-delete UX, "recording will stop" escalation, SFTP fallback.
+- **[`docs/social-enrichment-design.md`](./docs/social-enrichment-design.md)** — the three enrichment modes, legal posture, what the analyzer refuses to do.
+- **[`docs/nvidia-gpu-passthrough.md`](./docs/nvidia-gpu-passthrough.md)** — passing the NVIDIA GPU and Coral USB to the Frigate VM.
+- **[`docs/rtsp-endpoints.md`](./docs/rtsp-endpoints.md)** — per-camera RTSP table + VLAN 10 reachability.
+- **[`docs/protect-api-notes.md`](./docs/protect-api-notes.md)** — historical library notes from the pre-Frigate design.
 
-**→ [`../docs/proxmox-lxc-best-practices.md`](../docs/proxmox-lxc-best-practices.md)**
+## Runtime: Proxmox LXC + one VM
 
-### The four containers
+HomeSec runs on **Proxmox**. Most of this app lives in **unprivileged LXC containers** (one LXC per service, native systemd, no Docker, no nesting) per [`../docs/proxmox-lxc-best-practices.md`](../docs/proxmox-lxc-best-practices.md). The one exception is **Frigate itself**, which ships as a Docker image and needs heavy hardware passthrough (NVIDIA GPU + Coral USB), so it runs as a full Proxmox VM per [`../docs/proxmox-vm-best-practices.md`](../docs/proxmox-vm-best-practices.md).
 
-| Container | CTID | Role | VLANs | Scaffolded today? |
-|-----------|------|------|-------|--------------------|
-| `homesec-cameras-go2rtc` | 200 | RTSP → WebRTC re-mux. Pulls from UNVR, serves to frontend. | VLAN 1 + VLAN 10 | ✅ |
-| `homesec-cameras-ntfy` | 201 | Self-hosted push notifications. Receives alerts, pushes to phone. | VLAN 1 | ✅ |
-| `homesec-cameras-backend` | 202 | Subscribes to Protect WS, filters AI events, POSTs to ntfy. | VLAN 1 + VLAN 10 | ❌ language TBD |
-| `homesec-cameras-frontend` | 203 | LAN-only web UI: grid + event feed. | VLAN 1 | ❌ language TBD |
+### The six components
 
-All provisioning details, install scripts, systemd units, and container-specific READMEs live under [`app/lxc/`](./app/lxc).
+| # | Component | Runtime | Role | VLANs | Scaffolded today? |
+|---|-----------|---------|------|-------|--------------------|
+| 1 | `homesec-cameras-go2rtc`   | LXC 200 | RTSP pass-through: pulls from UNVR on VLAN 10, serves to Frigate on VLAN 1. | VLAN 1 + VLAN 10 | ✅ |
+| 2 | `homesec-cameras-ntfy`     | LXC 201 | Self-hosted push notifications. | VLAN 1 | ✅ |
+| 3 | `homesec-cameras-mqtt`     | LXC 202 | Mosquitto broker — event bus between Frigate and the analyzer. | VLAN 1 | ✅ |
+| 4 | `homesec-cameras-analyzer` | LXC 203 | Python service: cross-clip clustering, plate history, vehicle attributes, alerts, social enrichment, REST API. CPU-only. | VLAN 1 | 🟡 scaffold only (language locked in, code deferred) |
+| 5 | `homesec-cameras-frontend` | LXC 204 | LAN-only web UI. | VLAN 1 | 🟡 placeholder only |
+| 6 | `homesec-cameras-frigate`  | **VM 210** | Detection + face rec + ALPR + short-clip recording. **Coral USB** (24/7 object detection) + **NVIDIA GPU** (face rec + ALPR OCR). | VLAN 1 | ✅ |
+
+All provisioning details, install scripts, systemd units, and component-specific READMEs live under [`app/lxc/`](./app/lxc) and [`app/vm/`](./app/vm).
 
 ## Architecture
 
 ```
-┌────────────────────┐                VLAN 10
-│ UNVR Instant       │    (no internet, local only)
-│  UniFi Protect     │
-└─────────┬──────────┘
-          │ RTSP (port 7441) + WSS (port 443) on VLAN 10
-          │
-          ├────────────────────────────┐
-          │                            │
-          ▼                            ▼
-┌─────────────────────────┐  ┌──────────────────────────┐
-│ homesec-cameras-go2rtc  │  │ homesec-cameras-backend  │
-│ (LXC 200)               │  │ (LXC 202) — lang TBD     │
-│ VLAN 1 + VLAN 10        │  │ VLAN 1 + VLAN 10         │
-└────────────┬────────────┘  └─────────────┬────────────┘
-             │ WebRTC                      │ HTTP POST
-             │ (VLAN 1)                    │ (VLAN 1)
-             ▼                             ▼
-┌─────────────────────────┐  ┌──────────────────────────┐
-│ homesec-cameras-        │  │ homesec-cameras-ntfy     │
-│ frontend                │  │ (LXC 201)                │
-│ (LXC 203) — lang TBD    │  │ VLAN 1                   │
-│ VLAN 1                  │  └─────────────┬────────────┘
-└─────────────────────────┘                │ push
-                                           ▼
-                                       📱 phone
+                        VLAN 10 (no internet)
+┌────────────────────────────────────────────────────────────┐
+│   ┌────────────────┐                                       │
+│   │ UNVR Instant   │   RTSP :7441                          │
+│   │ (UniFi Protect)│◄──────────────┐                       │
+│   └────────────────┘               │                       │
+└────────────────────────────────────┼───────────────────────┘
+                                     │
+                                     │ VLAN 10 NIC
+                                     │
+                   ┌─────────────────▼─────────────────┐
+                   │ homesec-cameras-go2rtc            │
+                   │ LXC 200 • VLAN 1 + VLAN 10        │
+                   └─────────────────┬─────────────────┘
+                                     │ RTSP on VLAN 1
+                                     │
+          ┌──────────────────────────▼──────────────────────────┐
+          │ homesec-cameras-frigate (VM 210)                    │
+          │ VLAN 1 • Coral USB + NVIDIA GPU passthrough         │
+          │  - Object detection     → Coral Edge TPU (24/7)     │
+          │  - Face recognition     → NVIDIA GPU (event-driven) │
+          │  - License plate OCR    → NVIDIA GPU (event-driven) │
+          │  - Short event clips + thumbnails                   │
+          └──────┬─────────────────────────────────────┬────────┘
+                 │ MQTT publish                        │ HTTP REST
+                 │ frigate/events                      │ /api/events, /api/.../snapshot
+                 ▼                                     │
+        ┌─────────────────────┐                        │
+        │ homesec-cameras-mqtt│                        │
+        │ (LXC 202)           │                        │
+        │ Mosquitto broker    │                        │
+        └──────────┬──────────┘                        │
+                   │ MQTT subscribe                    │
+                   ▼                                   │
+        ┌──────────────────────────────────────────────▼───┐
+        │ homesec-cameras-analyzer (LXC 203)               │
+        │ Python 3.12 + FastAPI + SQLModel                 │
+        │  - Cross-clip face clustering                    │
+        │  - Plate history DB                              │
+        │  - Vehicle attribute inference                   │
+        │  - Social enrichment router                      │
+        │  - Alert dispatcher → ntfy                       │
+        │  - REST API for the frontend                     │
+        └───────┬──────────────────────────────┬───────────┘
+                │ HTTP POST                    │ HTTP GET/POST
+                ▼                              ▼
+   ┌───────────────────────┐       ┌──────────────────────────┐
+   │ homesec-cameras-ntfy  │       │ homesec-cameras-frontend │
+   │ (LXC 201)             │       │ (LXC 204)                │
+   │ Push → 📱 phone       │       │ Web UI, LAN-only         │
+   └───────────────────────┘       └──────────────────────────┘
 ```
 
 ## What's scaffolded today
 
-- [`app/lxc/README.md`](./app/lxc/README.md) — LXC layout overview.
-- [`app/lxc/go2rtc/`](./app/lxc/go2rtc) — `install.sh`, `go2rtc.service` (hardened systemd unit), `go2rtc.yaml` (7 streams, placeholder URLs), container `README.md`.
-- [`app/lxc/ntfy/`](./app/lxc/ntfy) — `install.sh`, `server.yml` (secure defaults, `auth-default-access: deny-all`), container `README.md`.
-- [`docs/protect-api-notes.md`](./docs/protect-api-notes.md) — library options for talking to UniFi Protect.
-- [`docs/rtsp-endpoints.md`](./docs/rtsp-endpoints.md) — per-camera RTSP table + the critical VLAN 10 reachability gotcha.
+- **`app/lxc/go2rtc/`** — install.sh, hardened systemd unit, go2rtc.yaml.
+- **`app/lxc/ntfy/`** — install.sh, secure-defaults server.yml.
+- **`app/lxc/mqtt/`** — install.sh, mosquitto.conf. _(new in detection stack pass)_
+- **`app/lxc/analyzer/README.md`** — scaffold only. Language locked in: Python 3.12. Code deferred. _(new)_
+- **`app/lxc/frontend/README.md`** — placeholder only. _(new)_
+- **`app/vm/README.md`** — VM inventory + provisioning index. _(new)_
+- **`app/vm/frigate/`** — install.sh, docker-compose.yml, frigate.yml, README. Frigate image tag still needs to be pinned before first install. _(new)_
+- **`docs/detection-stack-overview.md`** + five subsystem design docs + the NVIDIA passthrough runbook. _(new)_
 
 ## What's NOT scaffolded yet
 
-- **`homesec-cameras-backend`** — language is deferred (Node/TypeScript with `unifi-protect` or Python with `pyunifiprotect`). No code, no LXC directory, no install script yet.
-- **`homesec-cameras-frontend`** — same.
-- **Real RTSP URLs** — cameras aren't installed yet; fill these in from the UniFi Protect web UI post-install.
+- **Analyzer code.** Only the README and scaffold directory exist. The Python package, install script, systemd unit, and schema migrations land in a follow-up PR after the Frigate VM is stood up on real hardware.
+- **Frontend code.** Only the README exists.
+- **Real RTSP stream keys, UNVR VLAN 10 IP, MQTT passwords, Frigate image version.** All placeholders until hardware is up.
+- **Vehicle attribute inference.** Designed but not implemented in the analyzer; even when the analyzer lands it'll start with color-only and add make/model later.
 
 ## Provisioning order (once hardware is up)
 
-1. Read `docs/proxmox-lxc-best-practices.md` top to bottom.
-2. On the Proxmox host, create the VLAN-aware bridge if it doesn't exist (see the best-practices doc for the `/etc/network/interfaces` stanza).
-3. Provision `homesec-cameras-go2rtc` per `app/lxc/go2rtc/README.md`.
-4. Provision `homesec-cameras-ntfy` per `app/lxc/ntfy/README.md`.
-5. Fill in RTSP URLs from UniFi Protect into `/etc/go2rtc/go2rtc.yaml` inside the go2rtc container.
-6. Snapshot both containers (`pct snapshot <ctid> post-install`).
-7. Pick a backend language, then come back and scaffold containers 202 and 203.
+1. Read [`../docs/proxmox-lxc-best-practices.md`](../docs/proxmox-lxc-best-practices.md) and [`../docs/proxmox-vm-best-practices.md`](../docs/proxmox-vm-best-practices.md) top to bottom.
+2. Proxmox host preflight for GPU passthrough: IOMMU, vfio-pci binding, blacklist nvidia/nouveau. See [`docs/nvidia-gpu-passthrough.md`](./docs/nvidia-gpu-passthrough.md) Part 1.
+3. Create the VLAN-aware bridge on the host if it doesn't exist.
+4. Provision **`homesec-cameras-go2rtc`** (LXC 200) per [`app/lxc/go2rtc/README.md`](./app/lxc/go2rtc/README.md).
+5. Provision **`homesec-cameras-ntfy`** (LXC 201) per [`app/lxc/ntfy/README.md`](./app/lxc/ntfy/README.md).
+6. Provision **`homesec-cameras-mqtt`** (LXC 202) per [`app/lxc/mqtt/README.md`](./app/lxc/mqtt/README.md). Create admin + frigate + analyzer MQTT users.
+7. Provision **`homesec-cameras-frigate`** (VM 210) per [`app/vm/frigate/README.md`](./app/vm/frigate/README.md). Pin a real Frigate version in `docker-compose.yml` first.
+8. Fill in real RTSP stream tokens, MQTT creds, and camera entries in the Frigate config. Snapshot.
+9. Verify events show up on the MQTT broker (`mosquitto_sub -t 'frigate/#'`).
+10. Provision the analyzer LXC (deferred to follow-up PR once its code exists).
+11. Provision the frontend LXC (deferred to a later PR).
+
+Each step is independently verifiable; don't skip ahead.
 
 ## Hard constraint: VLAN 10 reachability
 
-Cameras and the UNVR have no internet. Containers that need to talk to them (`homesec-cameras-go2rtc` and the eventual `homesec-cameras-backend`) are **multi-homed** — they have a second LXC NIC with `tag=10`. See [`docs/rtsp-endpoints.md`](./docs/rtsp-endpoints.md) and the best-practices doc for the exact `pct create` flags and the reasoning behind them.
+Cameras and the UNVR have no internet. **Only `homesec-cameras-go2rtc` (LXC 200) is multi-homed** onto VLAN 10 — everything else stays on VLAN 1. Frigate reaches the cameras via go2rtc's VLAN 1 proxy. See [`docs/rtsp-endpoints.md`](./docs/rtsp-endpoints.md) for the reasoning and the `pct create` flags.
+
+## Hard constraint: no Docker-in-LXC, no cloud, no subscriptions
+
+- Frigate runs in a VM because its Docker dependency plus GPU passthrough makes it a natural fit for a VM. Every other component is a plain LXC with systemd services.
+- No cloud inference services are called from any component.
+- The only service in the entire stack that has a paid-subscription path is the **opt-in Mode C** social enrichment stub, which ships **disabled** and requires explicit operator configuration. Everything else is free + local.
