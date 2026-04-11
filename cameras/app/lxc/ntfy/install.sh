@@ -11,13 +11,32 @@
 set -euo pipefail
 
 # ---------------------------------------------------------------------------
-# PIN ME: bump on upgrade. Verify the SHA256 against the release page
-# (GitHub automatically attaches sha256 sums to the release assets page):
-#   https://github.com/binwiederhier/ntfy/releases
+# PIN ME on upgrade. ntfy publishes a checksums.txt file next to each
+# release — fetch it and extract the line matching the .deb for your arch:
+#   curl -sL https://github.com/binwiederhier/ntfy/releases/download/v${NTFY_VERSION}/checksums.txt | grep "_linux_${NTFY_ARCH}.deb"
+#
+# The HomeSec CHANGELOG (cameras/CHANGELOG.md) records the currently pinned
+# version — keep them in sync.
 # ---------------------------------------------------------------------------
-NTFY_VERSION="REPLACE_WITH_VERSION"          # e.g. 2.11.0
-NTFY_ARCH="amd64"                            # amd64 | arm64 | armv7
-NTFY_SHA256="REPLACE_WITH_SHA256"            # sha256 of the .deb file
+NTFY_VERSION="2.21.0"                        # released 2026-03-30
+NTFY_ARCH="amd64"                            # amd64 | arm64
+
+# Pinned SHA256 per architecture. Add a new case arm when you add an arch.
+case "${NTFY_ARCH}" in
+  amd64)
+    NTFY_SHA256="c55e26251eb0e86bd7dd59d8e09b86c6770d7c2efce2473e832d8f00e48331ec"
+    ;;
+  arm64)
+    NTFY_SHA256="5e7ed61e0c53ad5c2e6dcb419c1bf3a1adbfcf91580780c9732c74d3c8759eba"
+    ;;
+  *)
+    echo "ERROR: no pinned SHA256 for NTFY_ARCH='${NTFY_ARCH}'." >&2
+    echo "       Supported arches: amd64, arm64." >&2
+    echo "       To add another, fetch checksums.txt from the release and" >&2
+    echo "       add a case arm in install.sh." >&2
+    exit 1
+    ;;
+esac
 
 # ---------------------------------------------------------------------------
 # Preconditions
@@ -27,9 +46,14 @@ if [[ "${EUID}" -ne 0 ]]; then
   exit 1
 fi
 
-if [[ "${NTFY_VERSION}" == "REPLACE_WITH_VERSION" || "${NTFY_SHA256}" == "REPLACE_WITH_SHA256" ]]; then
-  echo "ERROR: edit install.sh and set NTFY_VERSION + NTFY_SHA256 before running." >&2
-  echo "       Get them from: https://github.com/binwiederhier/ntfy/releases" >&2
+# Sanity check that the version and SHA256 both look real (in case an edit
+# leaves one half-updated). Versions are semver-ish, SHA256 is 64 hex chars.
+if [[ ! "${NTFY_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo "ERROR: NTFY_VERSION='${NTFY_VERSION}' does not look like a semver string." >&2
+  exit 1
+fi
+if [[ ! "${NTFY_SHA256}" =~ ^[0-9a-f]{64}$ ]]; then
+  echo "ERROR: NTFY_SHA256 is not a 64-char lowercase hex string. Did you forget to update it after bumping the version?" >&2
   exit 1
 fi
 

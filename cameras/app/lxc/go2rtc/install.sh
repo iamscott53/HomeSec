@@ -11,13 +11,36 @@
 set -euo pipefail
 
 # ---------------------------------------------------------------------------
-# PIN ME: bump these on upgrade. Verify the SHA256 against the official
-# checksums.txt on the GitHub release page before committing a change.
+# PIN ME on upgrade. go2rtc does NOT publish a checksums.txt file, so the
+# SHA256 values below were computed locally by downloading each release
+# binary and running `sha256sum` against it. When you bump GO2RTC_VERSION,
+# you must re-compute (or re-verify) the SHA256 for your target arch from
+# the release asset on:
 #   https://github.com/AlexxIT/go2rtc/releases
+# and update the matching entry in the SHA256 case below.
+#
+# The HomeSec CHANGELOG (cameras/CHANGELOG.md) records the currently pinned
+# version — keep them in sync.
 # ---------------------------------------------------------------------------
-GO2RTC_VERSION="REPLACE_WITH_VERSION"        # e.g. 1.9.2
-GO2RTC_ARCH="linux_amd64"                    # linux_amd64 | linux_arm64 | linux_armv7
-GO2RTC_SHA256="REPLACE_WITH_SHA256"          # from checksums.txt on the release page
+GO2RTC_VERSION="1.9.14"                      # released 2026-01-19
+GO2RTC_ARCH="linux_amd64"                    # linux_amd64 | linux_arm64
+
+# Pinned SHA256 per architecture. Add a new case arm when you add an arch.
+case "${GO2RTC_ARCH}" in
+  linux_amd64)
+    GO2RTC_SHA256="32d616af226bd731678ffde328b94cfb94e30339bfefc469cfb76323144615a6"
+    ;;
+  linux_arm64)
+    GO2RTC_SHA256="359fabade8a7a51e81a55fe6df6b0ef81764a5e1d63179577534eaaa71904b50"
+    ;;
+  *)
+    echo "ERROR: no pinned SHA256 for GO2RTC_ARCH='${GO2RTC_ARCH}'." >&2
+    echo "       Supported arches: linux_amd64, linux_arm64." >&2
+    echo "       To add another, download the release asset, sha256sum it," >&2
+    echo "       and add a case arm in install.sh." >&2
+    exit 1
+    ;;
+esac
 
 # ---------------------------------------------------------------------------
 # Preconditions
@@ -27,9 +50,14 @@ if [[ "${EUID}" -ne 0 ]]; then
   exit 1
 fi
 
-if [[ "${GO2RTC_VERSION}" == "REPLACE_WITH_VERSION" || "${GO2RTC_SHA256}" == "REPLACE_WITH_SHA256" ]]; then
-  echo "ERROR: edit install.sh and set GO2RTC_VERSION + GO2RTC_SHA256 before running." >&2
-  echo "       Get them from: https://github.com/AlexxIT/go2rtc/releases" >&2
+# Sanity check that the version and SHA256 both look real (in case an edit
+# leaves one half-updated). Versions are semver-ish, SHA256 is 64 hex chars.
+if [[ ! "${GO2RTC_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo "ERROR: GO2RTC_VERSION='${GO2RTC_VERSION}' does not look like a semver string." >&2
+  exit 1
+fi
+if [[ ! "${GO2RTC_SHA256}" =~ ^[0-9a-f]{64}$ ]]; then
+  echo "ERROR: GO2RTC_SHA256 is not a 64-char lowercase hex string. Did you forget to update it after bumping the version?" >&2
   exit 1
 fi
 

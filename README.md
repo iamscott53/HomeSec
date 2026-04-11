@@ -38,3 +38,12 @@ Equipment list, signal path, VLAN architecture, camera placement (7 cameras, ove
 - `main` — stable, reviewed.
 - `dev` — integration branch. All feature branches merge into `dev` before `dev` merges into `main`.
 - `claude/*` and other feature branches — work branches, PR target is always `dev`, never `main`.
+
+## Versioning
+
+HomeSec uses [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html) and [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/) at two granularities:
+
+- **Repo-wide** releases are tracked in [`CHANGELOG.md`](./CHANGELOG.md) and tagged with unscoped tags like `v0.1.0`.
+- **Per-section** releases are tracked in each substantive section's own `CHANGELOG.md` (currently [`cameras/`](./cameras/CHANGELOG.md), [`docs/`](./docs/CHANGELOG.md), [`rack/`](./rack/CHANGELOG.md)) and tagged with scoped tags like `cameras/v0.1.0`. Stub sections get a scoped tag but no changelog until they grow real content.
+
+Tags are always annotated (`git tag -a`), never lightweight. The current pinned upstream dependencies for each section's apps are recorded in that section's CHANGELOG — keep them in sync when bumping versions in install scripts.

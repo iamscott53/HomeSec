@@ -59,9 +59,28 @@ pct exec 200 -- bash -c 'cd /root && chmod +x install.sh && ./install.sh'
 
 `go2rtc` needs internet **only during install** (to download the binary from GitHub). After install, it only talks to the UNVR on VLAN 10 and the frontend on VLAN 1 — both local. Add a pfSense rule to deny WAN egress from this container after install if you want to be strict.
 
+## Pinned version
+
+As of the `cameras/v0.1.0` tag, this container pins **go2rtc v1.9.14** (released 2026-01-19). See [`../../CHANGELOG.md`](../../CHANGELOG.md) for the current pin and history.
+
+SHA256 values are pinned per architecture inside `install.sh`:
+
+| Arch | SHA256 (first 16 chars) |
+|------|-------------------------|
+| `linux_amd64` | `32d616af226bd731…` |
+| `linux_arm64` | `359fabade8a7a51e…` |
+
+Other arches can be added by dropping a new case arm into the `case "${GO2RTC_ARCH}" in` block in `install.sh` with a SHA256 computed from the release asset (go2rtc does not publish a `checksums.txt`, so you compute it with `sha256sum` locally).
+
 ## Upgrades
 
-Bump `GO2RTC_VERSION` in `install.sh`, re-push it to the container, re-run. The script stops the service, replaces the binary, verifies the checksum, and restarts. Snapshot before upgrading.
+1. Look up the new version on [the go2rtc release page](https://github.com/AlexxIT/go2rtc/releases).
+2. Download each arch binary you care about and run `sha256sum` against it.
+3. Edit `install.sh`: bump `GO2RTC_VERSION` and update the SHA256 case entries for each arch you support.
+4. Update `cameras/CHANGELOG.md` with an `Unreleased` → `Changed` entry recording the bump.
+5. Snapshot the LXC: `pct snapshot 200 pre-go2rtc-upgrade`.
+6. Re-push `install.sh` into the container and re-run it. The script stops the service, replaces the binary, verifies the checksum, and restarts.
+7. After verification, tag a new cameras release: `git tag -a cameras/v0.X.Y -m "..."`.
 
 ## Do not
 

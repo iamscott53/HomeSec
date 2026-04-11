@@ -77,9 +77,32 @@ Save the `homesec-cameras-backend` password in a secrets manager (NOT in this re
 
 `ntfy` needs internet **only during install** (to download the .deb from GitHub). After install it only receives POSTs from the cameras backend on VLAN 1 and serves subscriptions from your phone on VLAN 1. Deny WAN egress from this LXC in pfSense after install.
 
+## Pinned version
+
+As of the `cameras/v0.1.0` tag, this container pins **ntfy v2.21.0** (released 2026-03-30). See [`../../CHANGELOG.md`](../../CHANGELOG.md) for the current pin and history.
+
+SHA256 values are pinned per architecture inside `install.sh`, taken verbatim from the upstream `checksums.txt` that ntfy publishes alongside every release:
+
+| Arch | SHA256 (first 16 chars) |
+|------|-------------------------|
+| `amd64` | `c55e26251eb0e86b…` |
+| `arm64` | `5e7ed61e0c53ad5c…` |
+
+Other arches can be added by dropping a new case arm into the `case "${NTFY_ARCH}" in` block in `install.sh` with the matching line from the release's `checksums.txt`.
+
 ## Upgrades
 
-Bump `NTFY_VERSION` in `install.sh`, snapshot the container, re-push and re-run. The script stops the service, installs the new .deb, reinstalls the config (preserving edits — it skips if the file already exists), and restarts.
+1. Look up the new version on [the ntfy release page](https://github.com/binwiederhier/ntfy/releases).
+2. Fetch the release's `checksums.txt` and copy the lines for each arch you support:
+   ```bash
+   curl -sL https://github.com/binwiederhier/ntfy/releases/download/v${NEW_VERSION}/checksums.txt \
+     | grep "_linux_amd64.deb\|_linux_arm64.deb"
+   ```
+3. Edit `install.sh`: bump `NTFY_VERSION` and update the SHA256 case entries.
+4. Update `cameras/CHANGELOG.md` with an `Unreleased` → `Changed` entry recording the bump.
+5. Snapshot the LXC: `pct snapshot 201 pre-ntfy-upgrade`.
+6. Re-push `install.sh` + `server.yml` into the container and re-run. The script stops the service, installs the new `.deb`, preserves the existing `/etc/ntfy/server.yml` if present (the scaffold default lands at `/etc/ntfy/server.yml.homesec-default` for diffing), and restarts.
+7. After verification, tag a new cameras release: `git tag -a cameras/v0.X.Y -m "..."`.
 
 ## Do not
 
