@@ -1,0 +1,43 @@
+# go2rtc configuration for HomeSec cameras
+#
+# This file defines one stream per physical camera, pulled via RTSP from the
+# UniFi Protect UNVR Instant and re-served as WebRTC to the LAN frontend.
+#
+# IMPORTANT: Listeners below are bound to LAN-only addresses. Do NOT expose
+# go2rtc to the internet. There is no authentication at the go2rtc layer;
+# access control is enforced by the pfSense firewall and VLAN boundaries.
+#
+# Before this file works, you must:
+#   1. Install the cameras and confirm each shows up in UniFi Protect.
+#   2. In Protect → camera settings → Advanced → RTSP, enable RTSP and copy
+#      the stream URL(s) for each camera.
+#   3. Replace every STREAM_KEY_PLACEHOLDER below with the real stream key.
+#   4. Replace UNVR_IP with the UNVR Instant's VLAN 10 IP address.
+#   5. See ../../docs/rtsp-endpoints.md for the per-camera table and the
+#      VLAN 10 reachability notes (this host must be able to reach UNVR_IP
+#      on port 7441).
+
+api:
+  # LAN-only. 127.0.0.1 means only the local host can hit the API.
+  # Change to the LAN interface IP if you want other LAN hosts to reach it.
+  listen: "127.0.0.1:1984"
+
+rtsp:
+  # LAN-only RTSP re-serve. Not normally needed for browser playback.
+  listen: "127.0.0.1:8554"
+
+webrtc:
+  # WebRTC signalling / ICE candidates. LAN-only.
+  listen: "127.0.0.1:8555"
+
+streams:
+  # Front coverage (4 devices)
+  doorbell:      rtsp://UNVR_IP:7441/STREAM_KEY_PLACEHOLDER   # G4 Doorbell Pro, front porch
+  front-left:    rtsp://UNVR_IP:7441/STREAM_KEY_PLACEHOLDER   # G5 Bullet, left front corner (garage side)
+  front-right:   rtsp://UNVR_IP:7441/STREAM_KEY_PLACEHOLDER   # G5 Bullet, right front corner
+  front-center:  rtsp://UNVR_IP:7441/STREAM_KEY_PLACEHOLDER   # G5 Bullet, eave above garage/entry
+
+  # Rear coverage (3 devices)
+  rear-left:     rtsp://UNVR_IP:7441/STREAM_KEY_PLACEHOLDER   # G5 Bullet, left rear corner
+  rear-right:    rtsp://UNVR_IP:7441/STREAM_KEY_PLACEHOLDER   # G5 Bullet, right rear corner
+  rear-center:   rtsp://UNVR_IP:7441/STREAM_KEY_PLACEHOLDER   # G5 Bullet, eave above lanai
