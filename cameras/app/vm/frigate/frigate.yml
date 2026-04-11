@@ -1,0 +1,237 @@
+# Frigate configuration template for the homesec-cameras-frigate VM.
+#
+# This file is installed to /var/lib/frigate/config/config.yml by install.sh.
+# It is tracked in git with placeholders only — NEVER commit real MQTT
+# passwords, RTSP passwords, or camera stream tokens.
+#
+# Placeholder replacements to make after copying into the VM:
+#   - MQTT_IP             → LAN IP of homesec-cameras-mqtt (LXC 202)
+#   - MQTT_USER           → Frigate's MQTT username (created in the mqtt LXC)
+#   - MQTT_PASSWORD_ENV   → the env var name holding the MQTT password
+#   - GO2RTC_IP           → LAN IP of homesec-cameras-go2rtc (LXC 200)
+#   - FRONT_DOOR_TOKEN    → RTSP token from go2rtc or directly from UniFi Protect
+#   - (repeat per camera)
+#
+# See ../../docs/detection-stack-overview.md for the overall architecture
+# and ../../docs/face-recognition-design.md / alpr-design.md for the
+# feature-specific rationale behind the settings below.
+
+mqtt:
+  enabled: true
+  host: MQTT_IP
+  port: 1883
+  topic_prefix: frigate
+  client_id: frigate-homesec
+  user: MQTT_USER
+  # Password comes from an environment variable inside the container,
+  # which is set from Docker secrets at runtime. See docker-compose.yml.
+  password: "{FRIGATE_MQTT_PASSWORD}"
+  stats_interval: 60
+
+# ---------------------------------------------------------------------
+# Detectors — the two-accelerator split.
+#
+# Coral EdgeTPU handles 24/7 object detection (the hot loop).
+# NVIDIA GPU is reserved for face recognition and ALPR OCR, which are
+# event-triggered and fire only when an object detection creates an event.
+# ---------------------------------------------------------------------
+detectors:
+  coral:
+    type: edgetpu
+    device: usb
+  # Frigate's face rec and ALPR use the "nvidia" / TensorRT backends
+  # internally; they don't need an explicit "detector" entry here.
+
+# ---------------------------------------------------------------------
+# ffmpeg / go2rtc integration.
+#
+# Frigate pulls its streams via go2rtc (we run go2rtc as a separate LXC
+# so only ONE component has VLAN 10 access). go2rtc serves the exact
+# same RTSP streams that come from the UNVR, just proxied to VLAN 1.
+# ---------------------------------------------------------------------
+ffmpeg:
+  hwaccel_args: preset-nvidia
+
+go2rtc:
+  # We use the external go2rtc LXC instead of Frigate's embedded go2rtc.
+  # Keep this section present but empty so Frigate doesn't start its own.
+  streams: {}
+
+# ---------------------------------------------------------------------
+# Object detection defaults applied to every camera unless overridden.
+# ---------------------------------------------------------------------
+detect:
+  enabled: true
+  fps: 5
+  min_initialized: 2
+
+objects:
+  track:
+    - person
+    - car
+    - truck
+    - motorcycle
+    - bicycle
+    - dog
+    - cat
+    - package
+  filters:
+    person:
+      min_score: 0.55
+      threshold: 0.70
+    car:
+      min_score: 0.55
+      threshold: 0.70
+    package:
+      min_score: 0.50
+      threshold: 0.70
+
+# ---------------------------------------------------------------------
+# Face recognition (Frigate 0.14+).
+#
+# Built-in face rec runs on the NVIDIA GPU. It emits per-event face
+# detection + matching against the enrolled gallery. Cross-clip clustering
+# of unknown faces happens downstream in the analyzer LXC — see
+# ../../docs/face-recognition-design.md.
+# ---------------------------------------------------------------------
+face_recognition:
+  enabled: true
+  model_size: large
+
+# ---------------------------------------------------------------------
+# License plate recognition (Frigate 0.16+).
+#
+# Runs on the NVIDIA GPU alongside face rec. Emits per-event plate text
+# + confidence. Cross-clip plate history is computed downstream in the
+# analyzer — see ../../docs/alpr-design.md.
+# ---------------------------------------------------------------------
+lpr:
+  enabled: true
+  # Tune these during first-run calibration.
+  detection_threshold: 0.70
+  recognition_threshold: 0.80
+
+# ---------------------------------------------------------------------
+# Recording + retention.
+#
+# Frigate records SHORT event clips only. The UNVR holds the long-term
+# full-resolution archive — we don't duplicate that storage.
+# ---------------------------------------------------------------------
+record:
+  enabled: true
+  retain:
+    days: 7
+    mode: motion
+  events:
+    retain:
+      default: 30
+      mode: active_objects
+
+snapshots:
+  enabled: true
+  clean_copy: true
+  timestamp: false
+  bounding_box: true
+  retain:
+    default: 30
+
+# ---------------------------------------------------------------------
+# Cameras (7 total).
+#
+# All streams come from the go2rtc LXC (which proxies them from the
+# UNVR on VLAN 10). Fill in GO2RTC_IP and each stream's token before
+# starting Frigate. Stream names must match whatever you configured in
+# cameras/app/lxc/go2rtc/go2rtc.yaml.
+# ---------------------------------------------------------------------
+cameras:
+  doorbell:
+    ffmpeg:
+      inputs:
+        - path: rtsp://GO2RTC_IP:8554/doorbell
+          roles: [detect, record]
+    detect:
+      width: 2688
+      height: 1520
+      fps: 5
+
+  front_left:
+    ffmpeg:
+      inputs:
+        - path: rtsp://GO2RTC_IP:8554/front-left
+          roles: [detect, record]
+    detect:
+      width: 2688
+      height: 1520
+      fps: 5
+
+  front_right:
+    ffmpeg:
+      inputs:
+        - path: rtsp://GO2RTC_IP:8554/front-right
+          roles: [detect, record]
+    detect:
+      width: 2688
+      height: 1520
+      fps: 5
+
+  front_center:
+    ffmpeg:
+      inputs:
+        - path: rtsp://GO2RTC_IP:8554/front-center
+          roles: [detect, record]
+    detect:
+      width: 2688
+      height: 1520
+      fps: 5
+
+  rear_left:
+    ffmpeg:
+      inputs:
+        - path: rtsp://GO2RTC_IP:8554/rear-left
+          roles: [detect, record]
+    detect:
+      width: 2688
+      height: 1520
+      fps: 5
+
+  rear_right:
+    ffmpeg:
+      inputs:
+        - path: rtsp://GO2RTC_IP:8554/rear-right
+          roles: [detect, record]
+    detect:
+      width: 2688
+      height: 1520
+      fps: 5
+
+  rear_center:
+    ffmpeg:
+      inputs:
+        - path: rtsp://GO2RTC_IP:8554/rear-center
+          roles: [detect, record]
+    detect:
+      width: 2688
+      height: 1520
+      fps: 5
+
+# ---------------------------------------------------------------------
+# UI / logger / telemetry
+# ---------------------------------------------------------------------
+ui:
+  time_format: 24hour
+  live_mode: mse
+
+logger:
+  default: info
+  logs:
+    frigate.event: debug
+
+telemetry:
+  network_interfaces:
+    - eth0
+  stats:
+    amd_gpu_stats: false
+    intel_gpu_stats: false
+    network_bandwidth: false
+
+version: 0.15-0

@@ -4,7 +4,8 @@ Cross-cutting documentation for HomeSec that doesn't belong to a single section.
 
 ## Documents
 
-- **[proxmox-lxc-best-practices.md](./proxmox-lxc-best-practices.md)** — LXC container standards, naming / numbering, VLAN NIC rules, systemd hardening, backup policy, and the do-not list. Every HomeSec section that grows an app runs that app in Proxmox LXC containers following this doc.
+- **[proxmox-lxc-best-practices.md](./proxmox-lxc-best-practices.md)** — LXC container standards, naming / numbering, VLAN NIC rules, systemd hardening, backup policy, and the do-not list. LXC is the default runtime for every HomeSec service.
+- **[proxmox-vm-best-practices.md](./proxmox-vm-best-practices.md)** — VM standards for the narrow cases where LXC isn't the right fit (Docker-only images, heavy PCIe passthrough, non-Linux guests). Covers VMID numbering, the PCIe passthrough pattern, USB passthrough, and the when-to-use-a-VM rubric.
 
 ## External source of truth
 

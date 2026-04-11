@@ -6,7 +6,45 @@ Format: [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/). Versioni
 
 ## [Unreleased]
 
-(nothing yet)
+### Added
+
+- **Detection stack architecture.** The cameras section is now a six-component stack designed around Frigate: `homesec-cameras-go2rtc` (LXC 200, existing), `homesec-cameras-ntfy` (LXC 201, existing), `homesec-cameras-mqtt` (LXC 202, new — Mosquitto broker), `homesec-cameras-analyzer` (LXC 203, scaffold only — Python service), `homesec-cameras-frontend` (LXC 204, placeholder), and `homesec-cameras-frigate` (**VM 210**, new — the detection engine with Coral USB + NVIDIA GPU passthrough).
+- **`app/vm/`** directory introduces the VM-runtime track for the cameras section. `vm/README.md` documents the cameras VM inventory and provisioning index. `vm/frigate/` ships a full scaffold: `README.md`, `docker-compose.yml` (single Frigate service with `runtime: nvidia`, Coral USB device access via `/dev/bus/usb`, hardened `cap_drop` + `no-new-privileges`, Docker secrets for the RTSP password, healthcheck), `frigate.yml` (7-camera template with placeholder MQTT creds and go2rtc stream URIs; `face_recognition: enabled: true`; `lpr: enabled: true`; `detectors: coral: edgetpu`; `record.retain.days: 7`), and `install.sh` (idempotent; verifies NVIDIA + Coral presence before any installs; installs Debian NVIDIA driver, Docker CE, NVIDIA Container Toolkit, libedgetpu1-std from Google's apt; lays out `/var/lib/frigate/{config,media,db,secrets}`; refuses to run if `docker-compose.yml` still has `PIN_ME_BEFORE_INSTALL`).
+- **`app/lxc/mqtt/`** — new Mosquitto LXC scaffold. `install.sh` (idempotent; installs `mosquitto` + `mosquitto-clients` from Debian stable; drops the config template at both `/etc/mosquitto/conf.d/homesec.conf` and `/etc/mosquitto/conf.d/99-homesec-default.conf` for diff-against-default; creates empty `passwd` + `acl` template files with correct perms), `mosquitto.conf` (`allow_anonymous false`, password + ACL files required, persistence, journald logging, rate and size limits), `README.md` (CTID 202 provisioning, first-time user setup for admin/frigate/analyzer users, ACL template, sanity test commands).
+- **`app/lxc/analyzer/README.md`** — scaffold reserving CTID 203. **Locks in Python 3.12 as the analyzer language** — the first concrete language commitment in the repo. Documents the planned stack (FastAPI, SQLModel on SQLite, asyncio-mqtt, InsightFace buffalo_l as a fallback, uv package manager, pydantic v2). Captures CPU-only hardware stance — the analyzer does clustering math on embeddings Frigate already computed on its GPU. Explicitly notes the contingency where Frigate stops exposing raw embeddings (then a VM 211 inference sidecar becomes necessary).
+- **`app/lxc/frontend/README.md`** — placeholder reserving CTID 204. Tech stack still TBD.
+- **`docs/detection-stack-overview.md`** — architectural source of truth. Event flow diagram, component responsibilities, "what Frigate owns vs what the analyzer owns" split table, installation order, why Frigate is in a VM not an LXC, why two accelerators (Coral hot-loop + GPU event-triggered).
+- **`docs/face-recognition-design.md`** — auto-cluster every face forever, incremental centroid clustering with cosine distance `MATCH_THRESHOLD = 0.4`, ArcFace `buffalo_l` 512-d embeddings, SCRFD face detector, quality gating, full SQLite schema (`persons`, `face_embeddings`, `person_aliases`, `person_cluster_centroids`), enrollment + merge + split flows, alert rules, legal/ethical posture for "retain forever".
+- **`docs/alpr-design.md`** — plate pipeline, normalization rules (uppercase, strip, length, FL-specific confusable-char rules for `I/O/Q`), Levenshtein fuzzy-merge within a time window, full SQLite schema (`plates`, `plate_sightings`, `vehicles`), correlation with faces and vehicles, storage estimate (~90k sightings / 5 years = ~45 MB DB + ~1.8 GB plate crops).
+- **`docs/vehicle-attributes-design.md`** — make/model/color extraction design. Four model options (YOLO classification, CLIP zero-shot, VLM, color-only). Recommendation for v0.1 implementation: start with color-only (Option D), then add YOLOv8 fine-tune (Option A). Full `vehicles` + `vehicle_sightings` schema. 14-value controlled color vocabulary. Implementation deferred.
+- **`docs/social-enrichment-design.md`** — the three enrichment modes: (A) linked profiles on enrolled people — default enabled, trivial; (B) manual reverse-search helper opening Google Lens / Bing Visual Search in a new browser tab — default disabled, operator toggles; (C) opt-in stub for a paid third-party face-search API with its own API key — ships disabled and unconfigured, explicit conflict with "zero subscriptions" and "zero cloud" documented inline. Hard-coded refusals: no scraping of Facebook / Instagram / X / LinkedIn / TikTok / Threads / Mastodon etc., no automated Mode B or Mode C calls, no sharing between installations. Full audit table schema (`social_enrichment_audit`, `third_party_search_results`).
+- **`docs/nvidia-gpu-passthrough.md`** — step-by-step host preflight (IOMMU, vfio-pci binding, driver blacklist), VM creation with `qm create` including `--hostpci0` and `--usb0` flags, in-VM driver install, Docker + NVIDIA Container Toolkit + libedgetpu install, troubleshooting for common failure modes.
+- **`../docs/proxmox-vm-best-practices.md`** — new cross-cutting standards doc covering VM use in HomeSec: when to use a VM instead of an LXC, VMID range per section (cameras 210-219, etc.), machine type / BIOS / CPU / disk / NIC defaults, PCIe passthrough pattern, USB passthrough pattern (bus+port over vendor:product), snapshot + backup policy, security do-not list.
+
+### Changed
+
+- **`README.md`** — rewritten to cover the detection stack. New "What this app does" list covers face rec, ALPR, vehicle attributes, live grid, short-clip recording, ntfy, social enrichment. New component table (5 LXCs + 1 VM). New architecture diagram. New "Design docs" index. New provisioning order. Keeps the VLAN 10 reachability constraint and the no-Docker-in-LXC / no-cloud / no-subscriptions constraints prominent.
+- **`app/lxc/README.md`** — rewritten: four-container list → five-LXC list with mqtt, analyzer, frontend added and backend removed. New section explaining that Frigate lives in `../vm/frigate/`, not here. Updated architecture diagram.
+- **`../docs/proxmox-lxc-best-practices.md`** — brief update adding a "LXC is the default, see VM best practices for exceptions" pointer at the top.
+- **`../docs/README.md`** — links the new `proxmox-vm-best-practices.md`.
+
+### Policy decisions locked in
+
+- **Frigate is the detection engine.** Build on it rather than rolling our own inference pipeline from scratch.
+- **Frigate runs in a Proxmox VM**, not an LXC, to honor the "no Docker-in-LXC" rule and use Proxmox's first-class PCIe passthrough for the NVIDIA GPU.
+- **Dual-accelerator hardware split:** Coral USB Accelerator for 24/7 object detection, NVIDIA GPU (P40 or 3060) for event-triggered face rec and ALPR OCR.
+- **Face recognition scope:** auto-cluster every face seen, retain forever. Unknown clusters get stable `Unknown #N` identities until the operator labels them.
+- **Social enrichment:** Mode A (linked profiles) default on; Mode B (manual reverse-search helper) default off; Mode C (third-party API stub) default off and unconfigured. No automated social-media scraping, ever.
+- **Analyzer language:** Python 3.12. This is the first concrete language commitment in the repo and supersedes the earlier "deferred" posture.
+
+### Not yet implemented
+
+- Analyzer Python code (only the README + scaffold directory exist).
+- Frontend code (only a README).
+- Real Frigate version pin in `docker-compose.yml` (still `PIN_ME_BEFORE_INSTALL`).
+- Real RTSP stream tokens, UNVR VLAN 10 IP, MQTT passwords, Frigate image version.
+- Vehicle attribute inference (designed, not implemented).
+- First end-to-end test on real hardware.
 
 ## [0.1.0] — 2026-04-11
 
