@@ -30,9 +30,20 @@ This directory is a **scaffold placeholder** for v0.1. The code doesn't exist ye
 3. **Cross-clip face clustering** — incremental centroid-based clustering of ArcFace embeddings into stable `persons` records. Every unknown face gets `Unknown #N` until the operator labels the cluster. See [`../../docs/face-recognition-design.md`](../../docs/face-recognition-design.md).
 4. **Plate history** — normalizes, dedupes, and tracks license plate sightings over time. See [`../../docs/alpr-design.md`](../../docs/alpr-design.md).
 5. **Vehicle attributes** — extracts make/model/color from vehicle crops. Deferred implementation; scaffold only in v0.1. See [`../../docs/vehicle-attributes-design.md`](../../docs/vehicle-attributes-design.md).
-6. **Alert dispatcher** — decides which events fire a phone alert via ntfy, applies dedup windows, quiet hours, and severity mapping.
-7. **Social enrichment router** — Mode A (linked profiles), Mode B (manual reverse-search helper), Mode C (opt-in third-party stub). See [`../../docs/social-enrichment-design.md`](../../docs/social-enrichment-design.md).
-8. **REST API** — FastAPI app that the frontend consumes. Also exposes MQTT event replay and a small admin interface for the operator.
+6. **Day-level recording protection sweep** — runs daily at 03:00 local via a systemd timer. Walks `/media/frigate/recordings/` (mounted into this LXC read-only + a small sentinel-write area), marks each day directory as `.protected` if any events occurred that date or `.cleanup-eligible` otherwise. See [`../../docs/recording-retention-design.md`](../../docs/recording-retention-design.md).
+7. **Disk watchdog** — runs hourly via a separate systemd timer. When `/media/frigate/recordings/` exceeds 80% disk usage, deletes the oldest `.cleanup-eligible` day directory until usage drops below 75%. At >95%, falls back to deleting the oldest `.protected` day with an elevated notification. NEVER touches `/media/frigate/clips/`.
+8. **First-trigger-of-day notification** — when the analyzer sees the first event of a new local-time date, fires a one-shot ntfy alert telling the operator to review the entire day in the frontend. Dedup'd per-day.
+9. **Alert dispatcher** — decides which per-event alerts fire a phone alert via ntfy, applies dedup windows, quiet hours, and severity mapping.
+10. **Social enrichment router** — Mode A (linked profiles), Mode B (manual reverse-search helper), Mode C (opt-in third-party stub). See [`../../docs/social-enrichment-design.md`](../../docs/social-enrichment-design.md).
+11. **REST API** — FastAPI app that the frontend consumes. Also exposes MQTT event replay, day summaries, and a small admin interface for the operator.
+
+### Mount requirement for recording retention
+
+The daily sweep and the disk watchdog need read + sentinel-write access to the Frigate VM's recording volume. In the current design, this is done by NFS- or SMB-mounting `/media/frigate/recordings/` from the Frigate VM into the analyzer LXC at the same path (`/media/frigate/recordings/`).
+
+The LXC needs write access ONLY to create / delete the `.protected` and `.cleanup-eligible` sentinel files and to delete day directories; it should NOT be able to modify individual recording files. If the Frigate VM exports the share with sub-directory-level permission control, grant the analyzer `rwx` on the top-level `recordings/` directory (so it can `rmdir` day directories) and optionally `ro` on individual files within days (so the analyzer can't tamper with the footage itself).
+
+This is a small security compromise for a significant operational win. The alternative — running the cleanup job inside the Frigate VM — would split the analyzer across two runtimes, which adds complexity without buying much.
 
 ## Hardware placement: CPU only
 

@@ -5,6 +5,7 @@ This document is the architectural source of truth for the cameras section's det
 - [`face-recognition-design.md`](./face-recognition-design.md) — auto-clustering every face seen, forever; data model; enrollment.
 - [`alpr-design.md`](./alpr-design.md) — plate detection, plate history, cross-clip correlation.
 - [`vehicle-attributes-design.md`](./vehicle-attributes-design.md) — make / model / color extraction; trade-offs; deferred implementation.
+- [`recording-retention-design.md`](./recording-retention-design.md) — two-tier storage (continuous 24/7 + triggered events), pre-roll, segment length, day-level protection, disk watchdog, "review this day" notification.
 - [`social-enrichment-design.md`](./social-enrichment-design.md) — linked profiles, manual reverse-search helper, opt-in third-party stub.
 - [`nvidia-gpu-passthrough.md`](./nvidia-gpu-passthrough.md) — passing the NVIDIA GPU to the Frigate VM.
 - [`protect-api-notes.md`](./protect-api-notes.md) — historical library notes from the pre-Frigate design. Still useful for the UNVR RTSP URL format.
@@ -14,21 +15,23 @@ This document is the architectural source of truth for the cameras section's det
 
 1. **Pull live video from all 7 cameras** (6x G5 Bullet + G4 Doorbell Pro) out of the UNVR on VLAN 10.
 2. **Detect objects** (person, vehicle, package, animal) in real time using on-GPU inference.
-3. **Recognize faces** and cluster every face seen — even strangers — into stable person IDs over time, with retention forever.
-4. **Recognize license plates** and maintain cross-clip plate history ("this plate has been seen 14 times across 6 weeks").
-5. **Extract vehicle attributes** (make, model, color) from vehicle crops to enrich plate sightings.
-6. **Push notifications** to a phone via self-hosted ntfy whenever a detection of interest fires.
-7. **Enrich known people** with social handles the operator links during enrollment. Optionally surface a one-click manual reverse-image search helper for unknown people. Optionally call an opt-in third-party face-search service the operator configures with their own API key.
-8. **Serve a web UI** for browsing events, enrolling people, confirming or merging auto-generated person clusters, and reviewing plate/vehicle history.
-9. **Stay entirely local.** Zero cloud services in the default configuration. No subscriptions. Privacy-oriented by default.
+3. **Record continuously 24/7** into day-level folders with ~30-minute segments, on a smart-retention policy: days with triggers are preserved indefinitely; days without triggers are eligible for cleanup when disk pressure hits. See [`recording-retention-design.md`](./recording-retention-design.md).
+4. **Capture triggered events separately** into a "Triggered Events" archive, with 60 seconds of pre-roll before the trigger and continued recording + tail until the tracked object leaves. Kept for 365 days, never deleted by the disk watchdog.
+5. **Recognize faces** and cluster every face seen — even strangers — into stable person IDs over time, with retention forever.
+6. **Recognize license plates** and maintain cross-clip plate history ("this plate has been seen 14 times across 6 weeks").
+7. **Extract vehicle attributes** (make, model, color) from vehicle crops to enrich plate sightings.
+8. **Push notifications** to a phone via self-hosted ntfy whenever a detection of interest fires, plus a one-shot "review this day" notification the first time a new day accumulates a trigger.
+9. **Enrich known people** with social handles the operator links during enrollment. Optionally surface a one-click manual reverse-image search helper for unknown people. Optionally call an opt-in third-party face-search service the operator configures with their own API key.
+10. **Serve a web UI** for browsing events, enrolling people, confirming or merging auto-generated person clusters, and reviewing plate/vehicle history.
+11. **Stay entirely local.** Zero cloud services in the default configuration. No subscriptions. Privacy-oriented by default.
 
 ## Non-goals (explicitly not in scope)
 
 - **Automated social-media scraping against face matches.** Violates platform ToS, potentially violates the CFAA, and conflicts with the "zero cloud / zero subscription" posture. Only an opt-in stub for a paid third-party face-search service is provided, and it ships disabled.
-- **24/7 recording duplicated between Frigate and the UNVR.** The UNVR is the long-term recording archive (that's what it's for). Frigate records short event clips only; the UNVR holds the full footage.
+- **Replacing the UNVR archive.** The UNVR Instant continues to run its own UniFi Protect 24/7 recording on its WD Purple HDD with its own retention policy — that's independent of anything in this repo. Frigate's 24/7 recording on Proxmox storage is **additional** (a second, smarter archive with day-level protection and triggered-event metadata). Both run in parallel.
 - **Real-time cloud ML.** No calls out to OpenAI / Google / AWS / Anthropic / any cloud inference service.
 - **Running Frigate in Docker inside an LXC with `nesting=1`.** The cross-cutting best-practices doc bans Docker-in-LXC; Frigate runs in a **VM** instead (see below).
-- **Subscribing to UniFi Protect's WebSocket event stream.** Frigate takes over as the source of truth for "what happened when" — we stop consuming Protect events directly. Protect still owns the long-term recordings, but its event model is replaced by Frigate's.
+- **Subscribing to UniFi Protect's WebSocket event stream.** Frigate takes over as the source of truth for "what happened when" — we stop consuming Protect events directly. Protect still owns its own independent long-term recording, but its event model is replaced by Frigate's.
 
 ## Component overview
 
@@ -131,7 +134,8 @@ A clear split matters — otherwise we duplicate work.
 |---|---|
 | Pulling RTSP from go2rtc | Frigate |
 | Object detection (person/vehicle/…) | Frigate |
-| Short event clips + snapshots | Frigate |
+| **Continuous 24/7 recording in 30-min segments** | **Frigate** |
+| **Triggered event clips with 60s pre-roll + post-roll** | **Frigate** |
 | Per-event face detection | Frigate |
 | Per-event face match against enrolled gallery | Frigate (built-in) |
 | Per-event ALPR text recognition | Frigate (built-in 0.16+) |
@@ -142,12 +146,15 @@ A clear split matters — otherwise we duplicate work.
 | **Plate → vehicle correlation** | **Analyzer** |
 | **Vehicle attribute extraction** (make / model / color) | **Analyzer** |
 | **Person ↔ plate correlation** (this person usually arrives in this vehicle) | **Analyzer** |
-| **Alert dispatch to ntfy** (dedup, quiet hours, severity) | **Analyzer** |
+| **Day-level protection sweep** (mark days as protected or cleanup-eligible) | **Analyzer** |
+| **Disk watchdog** (delete oldest eligible days when disk > 80%) | **Analyzer** |
+| **First-trigger-of-day notification** (one per new day) | **Analyzer** |
+| **Per-event alert dispatch to ntfy** (dedup, quiet hours, severity) | **Analyzer** |
 | **Social enrichment** (linked profiles, reverse-search helper) | **Analyzer** |
 | **Face enrollment UX** (naming a cluster, merging clusters, linking profiles) | **Frontend** → writes to Analyzer REST API |
-| **Long-term full-resolution video archive** | **UNVR** (unchanged) |
+| **Independent 24/7 archive on UNVR HDD** | **UniFi Protect on UNVR** (parallel, unchanged) |
 
-The rule of thumb: **Frigate owns "what just happened in this clip"**. The **analyzer owns "what does this clip mean in the context of everything we've ever seen"**. The **UNVR owns "the actual video tape"**.
+The rule of thumb: **Frigate owns "what just happened in this clip"**. The **analyzer owns "what does this clip mean in the context of everything we've ever seen, and how do we keep the storage sane"**. The **UNVR owns its own independent UniFi Protect archive in parallel**.
 
 ## Runtime dependencies summary
 

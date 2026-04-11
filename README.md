@@ -47,3 +47,29 @@ HomeSec uses [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html) an
 - **Per-section** releases are tracked in each substantive section's own `CHANGELOG.md` (currently [`cameras/`](./cameras/CHANGELOG.md), [`docs/`](./docs/CHANGELOG.md), [`rack/`](./rack/CHANGELOG.md)) and tagged with scoped tags like `cameras/v0.1.0`. Stub sections get a scoped tag but no changelog until they grow real content.
 
 Tags are always annotated (`git tag -a`), never lightweight. The current pinned upstream dependencies for each section's apps are recorded in that section's CHANGELOG — keep them in sync when bumping versions in install scripts.
+
+### Version bump is mandatory on every merge to `main`
+
+Every merge from `dev` into `main` **must** include a version bump. This is a hard rule:
+
+- **Patch bump** (`v0.1.0 → v0.1.1`) when the merge is fixes-only: bug fixes, doc typos, install-script tweaks, `.gitignore` cleanups.
+- **Minor bump** (`v0.1.0 → v0.2.0`) when any section gains new features or new substantive documentation: adding a new component, a new design doc, a new LXC/VM scaffold, a new `install.sh`, a new piece of functionality in an existing component.
+- **Major bump** (`v0.1.0 → v1.0.0`) when there's a breaking change: removing a component, renaming a section in a way that breaks existing deployments, changing the VLAN layout, incompatible schema migrations in the analyzer DB.
+
+The bump applies to **both** the repo-level tag AND any per-section scoped tag for sections whose content changed in that merge. Unchanged sections keep their existing scoped tag. In practice:
+
+1. Before clicking **Merge** on the `dev → main` PR, pull `dev` locally.
+2. Decide the bump level (patch / minor / major).
+3. Update every `CHANGELOG.md` that had an `[Unreleased]` section: move those entries into a new `[X.Y.Z] — YYYY-MM-DD` section and add a fresh empty `[Unreleased]` header at the top.
+4. Commit the changelog updates on `dev` with a message like `chore: bump repo v0.1.0 → v0.2.0, cameras v0.1.0 → v0.2.0`.
+5. Push `dev`, wait for the PR auto-update, then merge to `main`.
+6. Immediately after the merge lands on `main`, create the annotated tags pointing at the merge commit:
+   ```bash
+   git checkout main && git pull
+   git tag -a v0.2.0 -m "HomeSec v0.2.0 — see CHANGELOG.md"
+   git tag -a cameras/v0.2.0 -m "cameras v0.2.0 — see cameras/CHANGELOG.md"
+   # ...any other per-section tags for sections that changed
+   git push origin --tags
+   ```
+
+**An unbumped merge into `main` is a mistake that must be corrected by the next commit**: add the missing version bump as a follow-up commit and tag accordingly. Do not rewrite history on `main`.

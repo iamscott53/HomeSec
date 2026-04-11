@@ -48,9 +48,26 @@ detectors:
 # Frigate pulls its streams via go2rtc (we run go2rtc as a separate LXC
 # so only ONE component has VLAN 10 access). go2rtc serves the exact
 # same RTSP streams that come from the UNVR, just proxied to VLAN 1.
+#
+# Segment length for continuous 24/7 recording is set here. Default is
+# 1800 seconds = 30 minutes per file — large enough to be a manageable
+# chunk, small enough to copy/archive/play individually. To change it,
+# edit the -segment_time value below. See
+# ../../docs/recording-retention-design.md for the full explanation.
+#
+# Valid alternative values:
+#     -segment_time 600   →  10 min per file
+#     -segment_time 1200  →  20 min per file
+#     -segment_time 1800  →  30 min per file  (default — recommended)
+#     -segment_time 3600  →  60 min per file
 # ---------------------------------------------------------------------
 ffmpeg:
   hwaccel_args: preset-nvidia
+  output_args:
+    record: >-
+      preset-record-generic-audio-copy
+      -f segment -segment_time 1800 -segment_format mp4
+      -reset_timestamps 1 -strftime 1 -c copy
 
 go2rtc:
   # We use the external go2rtc LXC instead of Frigate's embedded go2rtc.
@@ -112,19 +129,46 @@ lpr:
   recognition_threshold: 0.80
 
 # ---------------------------------------------------------------------
-# Recording + retention.
+# Recording + retention — TWO-TIER MODEL.
 #
-# Frigate records SHORT event clips only. The UNVR holds the long-term
-# full-resolution archive — we don't duplicate that storage.
+# See ../../docs/recording-retention-design.md for the full design.
+# Short version:
+#
+# Tier 1: Continuous 24/7 recording to /media/frigate/recordings/,
+#   segmented into ~30-minute files (see ffmpeg.output_args.record
+#   above). Frigate writes it with day-as-top-level directory
+#   (YYYY-MM-DD/). Frigate's built-in retention here is set to a LONG
+#   number (365) because the REAL retention is handled by the analyzer
+#   LXC's day-level cleanup script: days with any triggered event get
+#   a `.protected` sentinel and are kept; days with no triggers get
+#   `.cleanup-eligible` and are deleted when disk pressure hits >80%.
+#
+# Tier 2: Triggered-event clips to /media/frigate/clips/. Each event
+#   gets one clip with 60s pre-roll and post-roll until the tracked
+#   object is gone plus 30s. Retention: 365 days (effectively forever;
+#   the analyzer's disk watchdog NEVER touches this directory).
+#
+# The UNVR Instant still runs its own independent UniFi Protect 24/7
+# recording in parallel. This Frigate archive is ADDITIONAL — a second,
+# smarter archive on Proxmox storage.
 # ---------------------------------------------------------------------
 record:
   enabled: true
+
+  # Tier 1 — continuous. We set a generous Frigate-native retention
+  # (365 days) because the analyzer's day-level cleanup script is the
+  # REAL retention authority. Frigate would never hit this limit in
+  # practice; the watchdog kicks in at 80% disk usage long before.
   retain:
-    days: 7
-    mode: motion
+    days: 365
+    mode: all
+
+  # Tier 2 — triggered events. Pre-roll + post-roll, kept for a full year.
   events:
+    pre_capture: 60            # 60 seconds of context before the trigger
+    post_capture: 30           # 30s tail after the tracked object leaves
     retain:
-      default: 30
+      default: 365             # 1 year of triggered clips (effectively forever)
       mode: active_objects
 
 snapshots:
@@ -133,7 +177,7 @@ snapshots:
   timestamp: false
   bounding_box: true
   retain:
-    default: 30
+    default: 365
 
 # ---------------------------------------------------------------------
 # Cameras (7 total).

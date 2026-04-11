@@ -9,8 +9,8 @@ Local, privacy-oriented camera app for the seven-camera Ubiquiti Protect deploym
 3. **License plate recognition** with cross-clip plate history — every plate, every sighting, tracked over time. Plates get normalized (confusable chars, state format) and fuzzy-merged for OCR noise.
 4. **Vehicle attributes** — make, model, color, body type — inferred from vehicle crops and correlated with plate sightings.
 5. **Live streaming** of the 7-camera grid in a browser on the LAN.
-6. **Short event clips** recorded to Frigate's local disk for quick review. The UNVR keeps the long-term full-resolution archive separately.
-7. **Push notifications** to a phone via self-hosted ntfy whenever a detection of interest fires.
+6. **Two-tier smart recording** — continuous 24/7 footage in day-level folders with 30-minute segments, plus a separate "Triggered Events" archive of motion-triggered clips with 60 seconds of pre-roll and post-roll. Days with triggers are preserved; days with no triggers are eligible for cleanup when disk pressure hits. See [`docs/recording-retention-design.md`](./docs/recording-retention-design.md).
+7. **Push notifications** to a phone via self-hosted ntfy: per-event alerts for interesting detections, plus a one-shot "review this day" notification the first time a new day accumulates a trigger.
 8. **Social enrichment** — linked profiles on enrolled people, optional manual reverse-image-search helper, optional opt-in third-party face-search stub. Defaults are the most restrictive mode; see [`docs/social-enrichment-design.md`](./docs/social-enrichment-design.md).
 
 Everything runs on your network. No cloud. No subscriptions. No phoning home.
@@ -23,6 +23,7 @@ Start with the overview, then the specific subsystem you care about:
 - **[`docs/face-recognition-design.md`](./docs/face-recognition-design.md)** — auto-clustering, data model, enrollment, retention policy.
 - **[`docs/alpr-design.md`](./docs/alpr-design.md)** — plate pipeline, normalization, cross-clip history.
 - **[`docs/vehicle-attributes-design.md`](./docs/vehicle-attributes-design.md)** — make/model/color options and trade-offs.
+- **[`docs/recording-retention-design.md`](./docs/recording-retention-design.md)** — two-tier recording, pre-roll + post-roll, segment length, day-level protection, disk watchdog, "review this day" notification.
 - **[`docs/social-enrichment-design.md`](./docs/social-enrichment-design.md)** — the three enrichment modes, legal posture, what the analyzer refuses to do.
 - **[`docs/nvidia-gpu-passthrough.md`](./docs/nvidia-gpu-passthrough.md)** — passing the NVIDIA GPU and Coral USB to the Frigate VM.
 - **[`docs/rtsp-endpoints.md`](./docs/rtsp-endpoints.md)** — per-camera RTSP table + VLAN 10 reachability.
