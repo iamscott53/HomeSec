@@ -1,11 +1,13 @@
-# go2rtc configuration for HomeSec cameras
+# go2rtc configuration for the homesec-cameras-go2rtc LXC.
 #
-# This file defines one stream per physical camera, pulled via RTSP from the
-# UniFi Protect UNVR Instant and re-served as WebRTC to the LAN frontend.
+# Runs inside an unprivileged Debian 12 LXC on Proxmox. The container has two
+# NICs: eth0 on VLAN 1 (serves WebRTC to the frontend), eth1 on VLAN 10
+# (pulls RTSP + WSS from the UNVR). The container itself is the trust
+# boundary — there is no other process on it — so listeners bind to all
+# interfaces inside the container. External access control is enforced at
+# the pfSense VLAN layer, NOT at go2rtc (go2rtc has no auth layer).
 #
-# IMPORTANT: Listeners below are bound to LAN-only addresses. Do NOT expose
-# go2rtc to the internet. There is no authentication at the go2rtc layer;
-# access control is enforced by the pfSense firewall and VLAN boundaries.
+# DO NOT enable nesting on this LXC. DO NOT expose these ports to WAN.
 #
 # Before this file works, you must:
 #   1. Install the cameras and confirm each shows up in UniFi Protect.
@@ -13,22 +15,21 @@
 #      the stream URL(s) for each camera.
 #   3. Replace every STREAM_KEY_PLACEHOLDER below with the real stream key.
 #   4. Replace UNVR_IP with the UNVR Instant's VLAN 10 IP address.
-#   5. See ../../docs/rtsp-endpoints.md for the per-camera table and the
-#      VLAN 10 reachability notes (this host must be able to reach UNVR_IP
-#      on port 7441).
+#   5. See ../../../docs/rtsp-endpoints.md for the per-camera table and the
+#      VLAN 10 reachability notes.
 
 api:
-  # LAN-only. 127.0.0.1 means only the local host can hit the API.
-  # Change to the LAN interface IP if you want other LAN hosts to reach it.
-  listen: "127.0.0.1:1984"
+  # HTTP API / web UI. Reached by the frontend container on VLAN 1.
+  listen: ":1984"
 
 rtsp:
-  # LAN-only RTSP re-serve. Not normally needed for browser playback.
-  listen: "127.0.0.1:8554"
+  # RTSP re-serve. Usually unused for browser playback but handy for VLC
+  # / ffprobe debugging from the operator workstation on VLAN 1.
+  listen: ":8554"
 
 webrtc:
-  # WebRTC signalling / ICE candidates. LAN-only.
-  listen: "127.0.0.1:8555"
+  # WebRTC signalling. The frontend LXC connects here over VLAN 1.
+  listen: ":8555"
 
 streams:
   # Front coverage (4 devices)

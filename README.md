@@ -8,6 +8,7 @@ Privacy-oriented home security and home networking for a new-construction home i
 - **Zero subscriptions.** If it needs a monthly bill to work, it's out.
 - **No Chinese-manufactured hardware.** Cameras, NVR, switch, firewall, rack — all US-headquartered vendors.
 - **Privacy-oriented by default.** VLAN 10 (cameras) has no internet access at all. Guest WiFi has no LAN access at all.
+- **Proxmox LXC, not Docker.** Every app in this repo runs as one or more unprivileged LXC containers on Proxmox — one LXC per service, natively via systemd, no Docker-in-LXC. See [`docs/proxmox-lxc-best-practices.md`](./docs/proxmox-lxc-best-practices.md) for the standards every section follows.
 
 ## Sections
 

@@ -1,0 +1,67 @@
+# /etc/ntfy/server.yml — HomeSec ntfy config
+#
+# Runs inside an unprivileged Debian 12 LXC container on Proxmox.
+# LAN-only. Do NOT expose to the internet. For remote push when you're
+# not home, use Tailscale / WireGuard back into your LAN — do not open
+# port 80/443 on pfSense.
+
+# ---------------------------------------------------------------------
+# Listen on port 80 inside the container. The container is the trust
+# boundary — nothing else is running inside it — and VLAN isolation is
+# enforced at pfSense.
+# ---------------------------------------------------------------------
+listen-http: ":80"
+behind-proxy: false
+
+# ---------------------------------------------------------------------
+# Base URL that ntfy uses in notification URLs. Set this to the
+# container's LAN hostname or IP. Example: "http://homesec-cameras-ntfy.lan"
+# or "http://10.0.1.42". Must NOT be a public hostname.
+# ---------------------------------------------------------------------
+base-url: "http://REPLACE_WITH_LAN_HOSTNAME_OR_IP"
+
+# ---------------------------------------------------------------------
+# Auth — deny everything until a user is explicitly granted access.
+# ---------------------------------------------------------------------
+auth-file: "/var/lib/ntfy/user.db"
+auth-default-access: "deny-all"
+
+# ---------------------------------------------------------------------
+# Message cache — local SQLite file. Limits how far back subscribers
+# can replay history. 12 hours is a reasonable default for AI alerts.
+# ---------------------------------------------------------------------
+cache-file: "/var/lib/ntfy/cache.db"
+cache-duration: "12h"
+
+# ---------------------------------------------------------------------
+# Attachments — camera snapshots get attached to alerts. Sensible
+# caps so a misbehaving sender cannot fill the disk.
+# ---------------------------------------------------------------------
+attachment-cache-dir: "/var/lib/ntfy/attachments"
+attachment-total-size-limit: "1G"
+attachment-file-size-limit: "20M"
+attachment-expiry-duration: "12h"
+
+# ---------------------------------------------------------------------
+# Rate limits — prevent a runaway backend or compromised device from
+# flooding your phone with notifications.
+# ---------------------------------------------------------------------
+visitor-request-limit-burst: 60
+visitor-request-limit-replenish: "10s"
+visitor-message-daily-limit: 2000
+
+# ---------------------------------------------------------------------
+# Disable features we don't need on a local-only instance.
+# ---------------------------------------------------------------------
+enable-signup: false
+enable-login: true
+enable-reservations: false
+web-push-public-key: ""
+web-push-private-key: ""
+
+# ---------------------------------------------------------------------
+# Logging — structured JSON is nicer when you eventually add a syslog
+# collector for HomeSec.
+# ---------------------------------------------------------------------
+log-format: "json"
+log-level: "info"
