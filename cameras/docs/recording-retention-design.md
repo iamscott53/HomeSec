@@ -8,6 +8,8 @@ This doc is the detailed design behind the two-tier recording model for the came
 - How day-level protection works: days with triggers are preserved; days with no triggers are eligible for deletion when disk pressure hits.
 - How the operator is notified to review a day that had triggers.
 
+**Companion doc:** [`storage-management-design.md`](./storage-management-design.md) covers disk-pressure thresholds, quality preset downgrades, the user-friendly download-and-delete UX, the "recording will stop" escalation, and the SFTP fallback. That doc is the authoritative source for thresholds and the rule that **protected days are never deleted automatically**; the older version of this file had a "delete protected at >95%" fallback which has been removed.
+
 It is the source of truth for the recording config in [`../app/vm/frigate/frigate.yml`](../app/vm/frigate/frigate.yml) and for the cleanup / watchdog / notification logic that will live in the `homesec-cameras-analyzer` LXC (see [`../app/lxc/analyzer/README.md`](../app/lxc/analyzer/README.md)).
 
 ## Goals
@@ -105,20 +107,14 @@ Sentinel files are used instead of a database column because they travel with th
 
 ### Disk watchdog
 
-A separate systemd timer runs **hourly**. For each run:
+A separate systemd timer runs **hourly**. The full threshold table, quality downgrade behavior, and "recording will stop" escalation live in [`storage-management-design.md`](./storage-management-design.md); short version:
 
-1. Check `df` on the filesystem holding `/media/frigate/recordings/`.
-2. If used% > **80**:
-   - Find the oldest day directory containing `.cleanup-eligible` (and NOT `.protected`).
-   - `rm -rf` that directory.
-   - Repeat until used% < **75** or there are no more eligible days.
-3. If used% > **95** AND only `.protected` days remain:
-   - Delete the oldest `.protected` day.
-   - POST an **elevated** notification to ntfy: _"Low disk — had to delete a protected day: YYYY-MM-DD. Remaining free: N%."_
-   - Stop after one deletion per watchdog run; re-check on the next run.
-4. Log every action to journald with structured fields `action`, `day_date`, `reason`, `free_before`, `free_after`.
+- **≥ 75% used** — emit a warning notification + delete the oldest `.cleanup-eligible` day directories until used < 70% or no more eligible days remain.
+- **≥ 90% used** — emit an urgent "critical" notification.
+- **≥ 95% used** — automatically downgrade the recording quality preset one step (High → Medium → Low → Lowest), restart Frigate with the new preset, emit a notification.
+- **No more `.cleanup-eligible` days AND used > 90%** — enter the "recording will stop" state: fire a red urgent notification every hour until the operator either adds storage, downloads + deletes old days via the Storage page, or acknowledges the state.
 
-Hysteresis (80% / 75% upper/lower) prevents thrashing when disk is hovering near the limit.
+**The watchdog NEVER deletes a `.protected` day, no matter how full the disk gets.** Protected days are inviolable under automation. The only path to removing one is the operator's explicit download-then-delete action in the frontend.
 
 **The watchdog NEVER touches `/media/frigate/clips/`.** Triggered events are always kept. If the clips directory ever grows enough to threaten the disk on its own, a separate "clips retention" policy kicks in — shrink `record.events.retain.default` or expand the disk.
 
@@ -168,19 +164,23 @@ The cleanup sweep and the disk watchdog must agree on the sentinel file names an
 
 | File | Meaning | Set by | Read by | Mutated? |
 |---|---|---|---|---|
-| `.protected` | This day has at least one triggered event. Do not delete unless there is NO `.cleanup-eligible` day remaining AND disk is > 95% full. | daily sweep | disk watchdog | Immutable after creation. Deleted only when the day dir itself is deleted. |
-| `.cleanup-eligible` | This day had zero triggers. Safe to delete when disk pressure hits. | daily sweep | disk watchdog | Immutable after creation. |
+| `.protected` | This day has at least one triggered event. **Never deleted by automation — under any disk condition.** The only way this day leaves the disk is the operator explicitly downloading it via the Storage page and confirming the post-download deletion prompt, or manual ssh/SFTP action. | daily sweep | disk watchdog, Storage page | Immutable after creation. Deleted only when the day dir itself is deleted by an operator. |
+| `.cleanup-eligible` | This day had zero triggers. Safe to delete automatically when disk pressure hits. | daily sweep | disk watchdog | Immutable after creation. |
 
-Precedence: if both files somehow exist in the same directory (data race between DB queries and filesystem state), `.protected` wins. The watchdog MUST refuse to delete a directory that has `.protected`, even if `.cleanup-eligible` is also present.
+Precedence: if both files somehow exist in the same directory (data race between DB queries and filesystem state), `.protected` wins. The watchdog MUST refuse to delete a directory that has `.protected`, even if `.cleanup-eligible` is also present. The watchdog MUST also refuse to delete a `.protected` directory via any disk-pressure override — the only path is operator-initiated, audited in the `storage_audit` table, and requires a post-download confirmation hash (see [`storage-management-design.md`](./storage-management-design.md)).
 
 ## Implementation status
 
 - ✅ Frigate config updated with `pre_capture`, `post_capture`, `events.retain.default`, 30-min segments, Tier 2 clips path.
 - ✅ This design doc (recording-retention-design.md).
+- ✅ Companion doc [`storage-management-design.md`](./storage-management-design.md) covering thresholds, quality presets, download UX, and the "recording will stop" escalation.
 - ✅ Analyzer README updated to list daily sweep, disk watchdog, and first-trigger notification as analyzer responsibilities.
 - ❌ Daily sweep script — not yet implemented (deferred to analyzer implementation PR).
 - ❌ Disk watchdog script — not yet implemented.
 - ❌ First-trigger notification — not yet implemented.
+- ❌ Quality preset swapper on the Frigate VM — not yet implemented.
+- ❌ Storage page + download + delete + Settings quality picker in the frontend — not yet implemented.
+- ❌ SFTP fallback service — not yet implemented.
 - ❌ Cleanup audit log and end-to-end test on real storage.
 
-All three deferred items are small scripts (Python or bash, low complexity) that will land together with the rest of the analyzer code. The Frigate-side config is ready today.
+All deferred items are documented in the design docs and will land together with the rest of the analyzer + frontend code. The Frigate-side base config is ready today.

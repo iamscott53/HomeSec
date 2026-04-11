@@ -9,9 +9,10 @@ Local, privacy-oriented camera app for the seven-camera Ubiquiti Protect deploym
 3. **License plate recognition** with cross-clip plate history — every plate, every sighting, tracked over time. Plates get normalized (confusable chars, state format) and fuzzy-merged for OCR noise.
 4. **Vehicle attributes** — make, model, color, body type — inferred from vehicle crops and correlated with plate sightings.
 5. **Live streaming** of the 7-camera grid in a browser on the LAN.
-6. **Two-tier smart recording** — continuous 24/7 footage in day-level folders with 30-minute segments, plus a separate "Triggered Events" archive of motion-triggered clips with 60 seconds of pre-roll and post-roll. Days with triggers are preserved; days with no triggers are eligible for cleanup when disk pressure hits. See [`docs/recording-retention-design.md`](./docs/recording-retention-design.md).
-7. **Push notifications** to a phone via self-hosted ntfy: per-event alerts for interesting detections, plus a one-shot "review this day" notification the first time a new day accumulates a trigger.
-8. **Social enrichment** — linked profiles on enrolled people, optional manual reverse-image-search helper, optional opt-in third-party face-search stub. Defaults are the most restrictive mode; see [`docs/social-enrichment-design.md`](./docs/social-enrichment-design.md).
+6. **Two-tier smart recording** — continuous 24/7 footage in day-level folders with 30-minute segments, plus a separate "Triggered Events" archive of motion-triggered clips with 60 seconds of pre-roll and post-roll. Days with triggers are **never** automatically deleted. Days with no triggers are eligible for cleanup when disk pressure hits. See [`docs/recording-retention-design.md`](./docs/recording-retention-design.md).
+7. **User-friendly storage management** — a Storage page in the web UI with a checkbox list of the oldest days, one-click "Download selected as ZIP" over HTTPS, and a post-download "Delete from server?" prompt (the only automated path to removing a protected day). Four recording quality presets (High / Medium / Low / Lowest) with automatic downgrade when disk hits 95% and a manual override in Settings. Never runs out of disk silently — when all cleanup-eligible days are exhausted and pressure keeps climbing, the operator gets a red hourly "recording will stop" notification until they add storage or download and delete protected days. See [`docs/storage-management-design.md`](./docs/storage-management-design.md).
+8. **Push notifications** to a phone via self-hosted ntfy: per-event alerts for interesting detections, a one-shot "review this day" notification the first time a new day accumulates a trigger, and storage-pressure notifications at 75% (warning), 90% (critical), and 95% (quality downgrade).
+9. **Social enrichment** — linked profiles on enrolled people, optional manual reverse-image-search helper, optional opt-in third-party face-search stub. Defaults are the most restrictive mode; see [`docs/social-enrichment-design.md`](./docs/social-enrichment-design.md).
 
 Everything runs on your network. No cloud. No subscriptions. No phoning home.
 
@@ -24,6 +25,7 @@ Start with the overview, then the specific subsystem you care about:
 - **[`docs/alpr-design.md`](./docs/alpr-design.md)** — plate pipeline, normalization, cross-clip history.
 - **[`docs/vehicle-attributes-design.md`](./docs/vehicle-attributes-design.md)** — make/model/color options and trade-offs.
 - **[`docs/recording-retention-design.md`](./docs/recording-retention-design.md)** — two-tier recording, pre-roll + post-roll, segment length, day-level protection, disk watchdog, "review this day" notification.
+- **[`docs/storage-management-design.md`](./docs/storage-management-design.md)** — disk pressure thresholds (75/90/95%), quality preset ladder, download-and-delete UX, "recording will stop" escalation, SFTP fallback.
 - **[`docs/social-enrichment-design.md`](./docs/social-enrichment-design.md)** — the three enrichment modes, legal posture, what the analyzer refuses to do.
 - **[`docs/nvidia-gpu-passthrough.md`](./docs/nvidia-gpu-passthrough.md)** — passing the NVIDIA GPU and Coral USB to the Frigate VM.
 - **[`docs/rtsp-endpoints.md`](./docs/rtsp-endpoints.md)** — per-camera RTSP table + VLAN 10 reachability.

@@ -131,7 +131,11 @@ lpr:
 # ---------------------------------------------------------------------
 # Recording + retention — TWO-TIER MODEL.
 #
-# See ../../docs/recording-retention-design.md for the full design.
+# See ../../docs/recording-retention-design.md for the full design and
+# ../../docs/storage-management-design.md for the disk-pressure
+# thresholds, quality downgrade ladder, download-and-delete UX, and
+# "recording will stop" escalation.
+#
 # Short version:
 #
 # Tier 1: Continuous 24/7 recording to /media/frigate/recordings/,
@@ -140,8 +144,11 @@ lpr:
 #   (YYYY-MM-DD/). Frigate's built-in retention here is set to a LONG
 #   number (365) because the REAL retention is handled by the analyzer
 #   LXC's day-level cleanup script: days with any triggered event get
-#   a `.protected` sentinel and are kept; days with no triggers get
-#   `.cleanup-eligible` and are deleted when disk pressure hits >80%.
+#   a `.protected` sentinel and are NEVER deleted automatically; days
+#   with no triggers get `.cleanup-eligible` and are deleted when disk
+#   pressure hits >= 75%. If all `.cleanup-eligible` days are exhausted
+#   and disk keeps climbing, the analyzer emits a "recording will stop"
+#   red notification every hour instead of touching protected days.
 #
 # Tier 2: Triggered-event clips to /media/frigate/clips/. Each event
 #   gets one clip with 60s pre-roll and post-roll until the tracked
@@ -151,6 +158,20 @@ lpr:
 # The UNVR Instant still runs its own independent UniFi Protect 24/7
 # recording in parallel. This Frigate archive is ADDITIONAL — a second,
 # smarter archive on Proxmox storage.
+#
+# QUALITY PRESETS (four tiers: High / Medium / Low / Lowest)
+# ---------------------------------------------------------------------
+# The analyzer maintains four complete config files at
+#   /var/lib/frigate/config/config.<preset>.yml
+# and symlinks /var/lib/frigate/config/config.yml at the active one.
+# `ffmpeg.output_args.record` below is the HIGH preset (stream-copy,
+# the default). The other three presets re-encode via h264_nvenc on
+# the NVIDIA GPU at progressively lower bitrates + framerates. See
+# ../../docs/storage-management-design.md for the exact ffmpeg lines
+# per preset and the storage budget table. Auto-downgrade at 95% disk
+# usage moves the symlink one step down and restarts Frigate. Manual
+# override lives in the frontend's Settings page. There is NO
+# automatic upgrade — only the operator can go back up.
 # ---------------------------------------------------------------------
 record:
   enabled: true

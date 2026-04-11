@@ -30,12 +30,29 @@ This directory is a **scaffold placeholder** for v0.1. The code doesn't exist ye
 3. **Cross-clip face clustering** — incremental centroid-based clustering of ArcFace embeddings into stable `persons` records. Every unknown face gets `Unknown #N` until the operator labels the cluster. See [`../../docs/face-recognition-design.md`](../../docs/face-recognition-design.md).
 4. **Plate history** — normalizes, dedupes, and tracks license plate sightings over time. See [`../../docs/alpr-design.md`](../../docs/alpr-design.md).
 5. **Vehicle attributes** — extracts make/model/color from vehicle crops. Deferred implementation; scaffold only in v0.1. See [`../../docs/vehicle-attributes-design.md`](../../docs/vehicle-attributes-design.md).
-6. **Day-level recording protection sweep** — runs daily at 03:00 local via a systemd timer. Walks `/media/frigate/recordings/` (mounted into this LXC read-only + a small sentinel-write area), marks each day directory as `.protected` if any events occurred that date or `.cleanup-eligible` otherwise. See [`../../docs/recording-retention-design.md`](../../docs/recording-retention-design.md).
-7. **Disk watchdog** — runs hourly via a separate systemd timer. When `/media/frigate/recordings/` exceeds 80% disk usage, deletes the oldest `.cleanup-eligible` day directory until usage drops below 75%. At >95%, falls back to deleting the oldest `.protected` day with an elevated notification. NEVER touches `/media/frigate/clips/`.
+6. **Day-level recording protection sweep** — runs daily at 03:00 local via a systemd timer. Walks `/media/frigate/recordings/`, marks each day directory as `.protected` if any events occurred that date or `.cleanup-eligible` otherwise. See [`../../docs/recording-retention-design.md`](../../docs/recording-retention-design.md).
+7. **Disk watchdog** — runs hourly via a separate systemd timer. Threshold chain (see [`../../docs/storage-management-design.md`](../../docs/storage-management-design.md) for the full doc):
+   - **≥ 75%**: delete oldest `.cleanup-eligible` day directories until < 70% or none remain + emit a warning notification (max one per 24h).
+   - **≥ 90%**: emit an urgent critical notification (max one per 24h).
+   - **≥ 95%**: automatically downgrade the recording quality preset one step (High → Medium → Low → Lowest) and restart Frigate with the new preset, max one downgrade per 12h. No automatic upgrade afterwards.
+   - **No more `.cleanup-eligible` days AND used > 90%**: enter the "recording will stop" state — fire a red urgent notification every hour until the operator acts.
+   - **NEVER deletes `.protected` days**, under any disk condition. Protected days are inviolable under automation.
+   - **NEVER touches `/media/frigate/clips/`.**
 8. **First-trigger-of-day notification** — when the analyzer sees the first event of a new local-time date, fires a one-shot ntfy alert telling the operator to review the entire day in the frontend. Dedup'd per-day.
-9. **Alert dispatcher** — decides which per-event alerts fire a phone alert via ntfy, applies dedup windows, quiet hours, and severity mapping.
-10. **Social enrichment router** — Mode A (linked profiles), Mode B (manual reverse-search helper), Mode C (opt-in third-party stub). See [`../../docs/social-enrichment-design.md`](../../docs/social-enrichment-design.md).
-11. **REST API** — FastAPI app that the frontend consumes. Also exposes MQTT event replay, day summaries, and a small admin interface for the operator.
+9. **Storage management REST API** for the Storage and Settings pages in the frontend:
+   - `GET  /api/storage/status` — current disk usage %, oldest day date, number of `.cleanup-eligible` days, number of `.protected` days, current quality preset, current recording state.
+   - `GET  /api/storage/days` — paginated, sortable list of day directories with size, camera count, status, trigger count.
+   - `POST /api/storage/download-prepare` — returns `{total_bytes, estimated_seconds}` for a proposed day list.
+   - `POST /api/storage/download` — streams a single zip (Python `zipfile.ZipFile` + `StreamingResponse`, `ZIP_STORED` since video is already compressed) containing the selected day directories. Rate-limited to 1 concurrent download. Writes to `storage_audit`.
+   - `DELETE /api/storage/days` — deletes selected day directories. For `.protected` days, requires a `confirmed_download_hash` matching a recent entry in `storage_audit` within the last 10 minutes, OR an explicit `force: true` flag with operator identifier. Writes to `storage_audit`.
+   - `GET  /api/storage/quality-preset` — current preset + history.
+   - `PUT  /api/storage/quality-preset` — change preset manually. Calls the Frigate VM's helper (SSH-based symlink swap + `docker compose restart frigate`). Writes to `quality_preset_changes`.
+   - `POST /api/storage/ack-full-warning` — operator acknowledges the "recording will stop" state, which temporarily silences the hourly red notification. Does not suppress future escalations if disk keeps climbing.
+   - `GET  /api/storage/audit` — paginated view of the `storage_audit` table for the frontend's audit log view.
+10. **Quality preset manager** — keeps the four preset config files on the Frigate VM in sync with what the analyzer thinks is active, symlinks to the currently active preset, and handles the "restart Frigate" dance. See the quality preset section of [`../../docs/storage-management-design.md`](../../docs/storage-management-design.md).
+11. **Alert dispatcher** — decides which per-event alerts fire a phone alert via ntfy, applies dedup windows, quiet hours, and severity mapping.
+12. **Social enrichment router** — Mode A (linked profiles), Mode B (manual reverse-search helper), Mode C (opt-in third-party stub). See [`../../docs/social-enrichment-design.md`](../../docs/social-enrichment-design.md).
+13. **REST API for the rest of the frontend** — FastAPI app that also exposes MQTT event replay, day summaries, per-person/per-plate detail views, and a small admin interface for the operator.
 
 ### Mount requirement for recording retention
 
