@@ -1,0 +1,44 @@
+# go2rtc configuration for the homesec-cameras-go2rtc LXC.
+#
+# Runs inside an unprivileged Debian 12 LXC on Proxmox. The container has two
+# NICs: eth0 on VLAN 1 (serves WebRTC to the frontend), eth1 on VLAN 10
+# (pulls RTSP + WSS from the UNVR). The container itself is the trust
+# boundary — there is no other process on it — so listeners bind to all
+# interfaces inside the container. External access control is enforced at
+# the pfSense VLAN layer, NOT at go2rtc (go2rtc has no auth layer).
+#
+# DO NOT enable nesting on this LXC. DO NOT expose these ports to WAN.
+#
+# Before this file works, you must:
+#   1. Install the cameras and confirm each shows up in UniFi Protect.
+#   2. In Protect → camera settings → Advanced → RTSP, enable RTSP and copy
+#      the stream URL(s) for each camera.
+#   3. Replace every STREAM_KEY_PLACEHOLDER below with the real stream key.
+#   4. Replace UNVR_IP with the UNVR Instant's VLAN 10 IP address.
+#   5. See ../../../docs/rtsp-endpoints.md for the per-camera table and the
+#      VLAN 10 reachability notes.
+
+api:
+  # HTTP API / web UI. Reached by the frontend container on VLAN 1.
+  listen: ":1984"
+
+rtsp:
+  # RTSP re-serve. Usually unused for browser playback but handy for VLC
+  # / ffprobe debugging from the operator workstation on VLAN 1.
+  listen: ":8554"
+
+webrtc:
+  # WebRTC signalling. The frontend LXC connects here over VLAN 1.
+  listen: ":8555"
+
+streams:
+  # Front coverage (4 devices)
+  doorbell:      rtsp://UNVR_IP:7441/STREAM_KEY_PLACEHOLDER   # G4 Doorbell Pro, front porch
+  front-left:    rtsp://UNVR_IP:7441/STREAM_KEY_PLACEHOLDER   # G5 Bullet, left front corner (garage side)
+  front-right:   rtsp://UNVR_IP:7441/STREAM_KEY_PLACEHOLDER   # G5 Bullet, right front corner
+  front-center:  rtsp://UNVR_IP:7441/STREAM_KEY_PLACEHOLDER   # G5 Bullet, eave above garage/entry
+
+  # Rear coverage (3 devices)
+  rear-left:     rtsp://UNVR_IP:7441/STREAM_KEY_PLACEHOLDER   # G5 Bullet, left rear corner
+  rear-right:    rtsp://UNVR_IP:7441/STREAM_KEY_PLACEHOLDER   # G5 Bullet, right rear corner
+  rear-center:   rtsp://UNVR_IP:7441/STREAM_KEY_PLACEHOLDER   # G5 Bullet, eave above lanai

@@ -1,0 +1,164 @@
+# HomeSec .gitignore
+#
+# This repo is a monorepo for a privacy-oriented home security / home
+# networking setup. It contains documentation, configuration, and (soon)
+# small apps. Never commit:
+#   - secrets of any kind (API keys, passwords, tokens, auth cookies)
+#   - real device IPs if considered sensitive (internal LAN is fine,
+#     but public IPs, dynamic DNS hostnames, etc. should be kept out)
+#   - firewall rule exports that contain shared keys or passwords
+#   - raw camera recordings or snapshots
+#   - pfSense config backups (contain hashed passwords and keys)
+
+# ---------------------------------------------------------------------
+# Secrets and credentials — cast a wide net
+# ---------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+*.env
+*.env.local
+*.env.*.local
+secrets/
+secret/
+*.secret
+*.secrets
+credentials
+credentials.*
+!credentials.example*
+*credentials*.json
+*credentials*.yaml
+*credentials*.yml
+.netrc
+.pgpass
+.htpasswd
+
+# Private keys, certs, keystores
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.crt
+!*.example.crt
+id_rsa
+id_rsa.*
+id_ed25519
+id_ed25519.*
+*.ppk
+authorized_keys
+known_hosts
+
+# API token files by common names
+token
+token.*
+*.token
+*.access_token
+*.refresh_token
+api_key
+api_key.*
+*.api_key
+apikey
+apikey.*
+
+# ---------------------------------------------------------------------
+# Cameras app — runtime data, recordings, snapshots, real configs
+# ---------------------------------------------------------------------
+cameras/app/**/data/
+cameras/app/**/recordings/
+cameras/app/**/snapshots/
+cameras/app/**/*.mp4
+cameras/app/**/*.mkv
+# Note: we deliberately do NOT exclude `*.ts` by bare extension here.
+# MPEG-TS video segments live inside `recordings/`, `data/`, or
+# `snapshots/` directories (already excluded above), and a bare
+# `*.ts` pattern would silently swallow TypeScript source files if
+# the cameras backend or frontend is ever written in TS.
+cameras/app/**/*.jpg
+cameras/app/**/*.jpeg
+cameras/app/**/*.png
+!cameras/app/**/README*.png
+# The go2rtc config file is tracked with placeholders only. If you create
+# a local copy with real RTSP URLs, put it alongside as go2rtc.local.yaml
+# and keep it out of git. (Path updated after the Docker→LXC refactor.)
+cameras/app/lxc/go2rtc/go2rtc.local.yaml
+cameras/app/**/ntfy-data/
+cameras/app/**/ntfy/data/
+
+# ---------------------------------------------------------------------
+# pfSense / network config backups — often contain hashed creds
+# ---------------------------------------------------------------------
+network-security/**/config-*.xml
+network-security/**/pfsense-*.xml
+network-security/**/*.backup
+network-security/**/backups/
+
+# ---------------------------------------------------------------------
+# Local override files — keep local-only variants out of git
+# ---------------------------------------------------------------------
+*.local
+*.local.*
+!*.local.example*
+local/
+.local/
+
+# ---------------------------------------------------------------------
+# Language / build artifacts (nothing here today, but scaffolded for
+# when the cameras backend/frontend lands)
+# ---------------------------------------------------------------------
+
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.pnpm-store/
+dist/
+build/
+.next/
+.nuxt/
+.cache/
+coverage/
+*.tsbuildinfo
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+ENV/
+pip-log.txt
+pip-delete-this-directory.txt
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+htmlcov/
+.coverage
+.coverage.*
+
+# ---------------------------------------------------------------------
+# Editor / IDE / OS
+# ---------------------------------------------------------------------
+.vscode/
+!.vscode/settings.example.json
+.idea/
+*.swp
+*.swo
+*.swn
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---------------------------------------------------------------------
+# Claude / AI assistant artifacts
+# ---------------------------------------------------------------------
+.claude/
+.aider*

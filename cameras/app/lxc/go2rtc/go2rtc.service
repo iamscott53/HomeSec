@@ -1,0 +1,44 @@
+[Unit]
+Description=go2rtc streaming server (HomeSec cameras)
+Documentation=https://github.com/AlexxIT/go2rtc
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=go2rtc
+Group=go2rtc
+ExecStart=/usr/local/bin/go2rtc -config /etc/go2rtc/go2rtc.yaml
+Restart=on-failure
+RestartSec=5
+
+# --- sandboxing ------------------------------------------------------------
+# go2rtc needs to read its config and write a small amount of state under
+# /var/lib/go2rtc. It does not need anything else.
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectHostname=true
+ProtectClock=true
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @debug @mount @cpu-emulation @obsolete @raw-io @reboot @swap
+ReadWritePaths=/var/lib/go2rtc
+# Drop every capability. Add CAP_NET_BIND_SERVICE back here only if you
+# reconfigure go2rtc to bind to a privileged port (<1024).
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+[Install]
+WantedBy=multi-user.target
